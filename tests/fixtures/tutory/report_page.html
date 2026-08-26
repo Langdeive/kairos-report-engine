@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head><meta charset="utf-8"><title>Relatório sintético</title></head>
+  <body>
+    <section class="aluno-details">
+      <h4>Aluno Exemplo</h4>
+      <p>Curso: Curso Preparatório Exemplo</p>
+    </section>
+
+    <section class="metrics-grid">
+      <article class="metric-card"><p class="metric-label">Total de Horas</p><p class="metric-value">18h 30m</p></article>
+      <article class="metric-card"><p class="metric-label">% de acertos</p><p class="metric-value">76,5%</p></article>
+      <article class="metric-card"><p class="metric-label">Progresso Geral</p><p class="metric-value">42%</p></article>
+      <article class="metric-card"><p class="metric-label">Dias de Estudo</p><p class="metric-value">16</p></article>
+    </section>
+
+    <section class="insights-section">
+      <article class="insight-card"><div></div><div><h4>Média de tempo</h4><p>1h 09m</p></div></article>
+      <article class="insight-card"><div></div><div><h4>Matéria mais estudada</h4><p>Direito Penal</p></div></article>
+      <article class="insight-card"><div></div><div><h4>Matéria menos estudada</h4><p>Arquivologia</p></div></article>
+    </section>
+
+    <table class="ranking-table">
+      <thead><tr><th>Rank</th><th>Disciplina</th><th>Acertos</th><th>Tempo</th></tr></thead>
+      <tbody>
+        <tr><td>1</td><td>Direito Penal</td><td>82%</td><td>5h 30m</td></tr>
+        <tr><td>2</td><td>Português</td><td>71,5%</td><td>3h</td></tr>
+      </tbody>
+    </table>
+
+    <div id="chart_panorama"></div>
+    <div id="chart_progresso_mensal"></div>
+    <div id="chart_modalidades"></div>
+    <div id="chart_progresso_disciplina"></div>
+    <div id="chart_horas_estudo"></div>
+    <div id="chart_performance"></div>
+
+    <script>
+      const chartData = {
+        panorama: {disciplinas: ["Direito Penal", "Português"], horas: [5.5, 3]},
+        progressoMensal: {
+          labels: ["Semana 31/2026", "Semana 32/2026"],
+          horas: [8, 10.5],
+          meta: [10, 10]
+        },
+        modalidades: {Teoria: 9.5, Questões: 7, Revisão: 2},
+        progressoDisciplina: {
+          disciplinas: ["Direito Penal", "Português"],
+          percentuais: [58, 37]
+        },
+        horasEstudo: {
+          labels: ["Semana 31/2026", "Semana 32/2026"],
+          horas: [8, 10.5],
+          mediaTopAlunos: {"Semana 31/2026": 11, "Semana 32/2026": 12}
+        },
+        performance: {disciplinas: ["Direito", "Língua Portuguesa"], valores: [79, 71.5]}
+      };
+    </script>
+  </body>
+</html>

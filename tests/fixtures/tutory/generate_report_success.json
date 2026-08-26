@@ -1,0 +1,9 @@
+{
+  "result": true,
+  "data": [
+    {
+      "id": "student-1",
+      "token": "report-key"
+    }
+  ]
+}
