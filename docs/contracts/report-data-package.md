@@ -1,7 +1,8 @@
 # Contrato do pacote de dados do relatório
 
-**Versão:** `1.0`  
-**Formato:** JSON Lines (`.jsonl`)  
+**Versão:** `1.0`
+
+**Formato:** JSON Lines (`.jsonl`)
 **Comando:** `kairos-report data export --run <id>`
 
 ## Objetivo
