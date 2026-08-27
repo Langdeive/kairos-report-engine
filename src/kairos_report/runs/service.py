@@ -144,16 +144,16 @@ class RunService:
                 )
                 session.add(report)
                 session.flush()
+                student.name = external.name
                 try:
                     normalized_phone = normalize_brazil_phone(external.raw_phone or "")
                 except InvalidPhone:
-                    report.status = ReportStatus.BLOCKED
                     report.validation_errors = ["invalid_phone"]
-                    self._audit_report(session, run.id, report.id, "report.blocked")
+                    student.phone_ciphertext = None
+                    self._audit_report(session, run.id, report.id, "report.delivery_blocked")
                 else:
-                    student.name = external.name
                     student.phone_ciphertext = self._phone_cipher.encrypt(normalized_phone)
-                    self._audit_report(session, run.id, report.id, "report.pending")
+                self._audit_report(session, run.id, report.id, "report.pending")
 
     def _extract_one(self, report_id: int) -> None:
         with self._sessions() as session:
@@ -178,7 +178,11 @@ class RunService:
                 stored = session.get(StudentReport, report_id)
                 if stored is not None:
                     stored.status = ReportStatus.BLOCKED
-                    stored.validation_errors = ["tutory_contract_changed"]
+                    stored.validation_errors = list(
+                        dict.fromkeys(
+                            [*stored.validation_errors, "tutory_contract_changed"]
+                        )
+                    )
                     self._audit_report(session, run_id, report_id, "report.blocked")
             return
 

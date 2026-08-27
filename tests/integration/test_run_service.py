@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 
 from kairos_report.config import Settings
 from kairos_report.db import create_engine_for
-from kairos_report.models import Base, ReportStatus, StudentReport
+from kairos_report.models import Base, ReportStatus, Student, StudentReport
 from kairos_report.runs.service import RunService
 from kairos_report.tutory.client import ReportDocument, TutoryStudent
 
@@ -41,7 +41,9 @@ def test_extract_resume_skips_completed_students(test_settings: Settings) -> Non
     assert client.generate_report.call_count == 2
 
 
-def test_invalid_phone_blocks_only_that_student(test_settings: Settings) -> None:
+def test_invalid_phone_does_not_prevent_report_data_extraction(
+    test_settings: Settings,
+) -> None:
     service, client = build_service(
         test_settings,
         [
@@ -54,9 +56,21 @@ def test_invalid_phone_blocks_only_that_student(test_settings: Settings) -> None
     summary = service.extract(run.id, ["s1", "s2"])
 
     assert summary.expected == 2
-    assert summary.valid == 1
-    assert summary.blocked == 1
-    assert client.generate_report.call_count == 1
+    assert summary.valid == 2
+    assert summary.blocked == 0
+    assert client.generate_report.call_count == 2
+    engine = create_engine_for(test_settings)
+    with Session(engine) as session:
+        report = session.scalar(
+            select(StudentReport)
+            .join(Student)
+            .where(Student.name == "Bia")
+        )
+        assert report is not None
+        assert report.status == ReportStatus.VALID
+        assert report.validation_errors == ["invalid_phone"]
+        assert report.student.phone_ciphertext is None
+    engine.dispose()
 
 
 def test_500_students_are_processed_once_and_resume_without_duplicates(

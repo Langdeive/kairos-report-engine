@@ -18,6 +18,8 @@ Já está implementado e testado:
 - consulta de telefone;
 - geração e leitura do Relatório do Coach;
 - normalização das métricas mensais e semanais;
+- cálculos derivados sustentados pelos dados disponíveis;
+- exportação de um pacote canônico e independente do layout por aluno;
 - armazenamento SQLite e telefone protegido;
 - criação, extração, consulta e retomada de ciclos.
 
@@ -32,8 +34,8 @@ Ainda não está implementado:
 - empacotamento Docker e instalação como skill;
 - fluxo automatizado de diagnóstico e autorreparo.
 
-Portanto, **não envie relatórios reais ainda**. O projeto atual termina depois da extração e da
-normalização.
+Portanto, **não envie relatórios reais ainda**. O projeto atual termina depois da extração, da
+normalização e da exportação do pacote de dados.
 
 ## Instalação
 
@@ -82,6 +84,17 @@ com aprovação humana.
    uv run kairos-report run status --run ID
    ```
 
+5. Exporte a matéria-prima completa para comentários e futuro PDF:
+
+   ```bash
+   uv run kairos-report data export --run ID
+   ```
+
+   O comando retorna o caminho, `expected`, `exported`, `complete` e os totais `ready`, `blocked`,
+   `pending` e `delivery_blocked`. Só trate o pacote como completo quando `complete=true`. O JSONL
+   contém um registro por aluno encontrado no ciclo; telefone não é incluído. Consulte
+   `docs/contracts/report-data-package.md` antes de consumir o arquivo.
+
 Se a execução cair, repita `run extract` para o mesmo ciclo. O serviço ignora registros válidos
 já concluídos e continua os pendentes.
 
@@ -96,6 +109,7 @@ já concluídos e continua os pendentes.
 - Nunca registre credenciais, cookies, token, telefone completo ou HTML bruto.
 - Uma divergência entre o total do painel e os alunos encontrados deve bloquear o ciclo.
 - Uma falha individual deve bloquear somente aquele aluno quando for seguro continuar.
+- Telefone inválido não bloqueia os dados acadêmicos; bloqueia somente a futura entrega.
 - Não crie serviço TCP ou painel web para esta fase. A integração com você é pela CLI local.
 - O Baileys continua sob sua responsabilidade. Esta ferramenta futuramente entregará somente
   uma fila aprovada e receberá de volta o resultado de cada envio.

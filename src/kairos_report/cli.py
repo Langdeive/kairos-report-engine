@@ -8,17 +8,21 @@ import tempfile
 from calendar import monthrange
 from datetime import date
 from pathlib import Path
+from typing import Annotated
 
 import typer
 
 from kairos_report.config import Settings
+from kairos_report.data.service import ReportDataService
 from kairos_report.db import upgrade_database
 from kairos_report.runs.service import RunService
 from kairos_report.tutory.client import TutoryClient
 
 app = typer.Typer(no_args_is_help=True)
 run_app = typer.Typer(no_args_is_help=True)
+data_app = typer.Typer(no_args_is_help=True)
 app.add_typer(run_app, name="run")
+app.add_typer(data_app, name="data")
 
 
 @app.command()
@@ -73,6 +77,12 @@ def _run_service() -> RunService:
     return RunService(settings, TutoryClient(settings))
 
 
+def _data_service() -> ReportDataService:
+    settings = Settings.load()
+    upgrade_database(settings)
+    return ReportDataService(settings)
+
+
 @run_app.command("create")
 def run_create(month: str = typer.Option(..., "--month")) -> None:
     """Create a frozen monthly report run."""
@@ -103,6 +113,16 @@ def run_status(run_id: int = typer.Option(..., "--run")) -> None:
     """Return the persisted counters for one monthly run."""
     summary = _run_service().status(run_id)
     typer.echo(summary.model_dump_json())
+
+
+@data_app.command("export")
+def data_export(
+    run_id: int = typer.Option(..., "--run"),
+    output: Annotated[Path | None, typer.Option("--output")] = None,
+) -> None:
+    """Export one complete, layout-independent data record per student."""
+    result = _data_service().export(run_id, output)
+    typer.echo(result.model_dump_json())
 
 
 if __name__ == "__main__":

@@ -3,10 +3,10 @@
 Ferramenta local operada pelo Hermes para extrair e normalizar o **Relatório do Coach** da
 Tutory e, nas próximas etapas, gerar os relatórios mensais de evolução da Kairós Mentorias.
 
-> **Estado atual:** a extração direta da Tutory, a normalização dos dados e a retomada segura
-> de lotes já estão implementadas. Comentários do Hermes, PDF final, aprovação e fila de envio
-> pelo WhatsApp ainda não estão prontos. Não use este projeto para enviar relatórios reais antes
-> de concluir e validar essas etapas.
+> **Estado atual:** a extração direta da Tutory, a normalização, o pacote canônico de dados e a
+> retomada segura de lotes já estão implementados. Comentários do Hermes, PDF final, aprovação e
+> fila de envio pelo WhatsApp ainda não estão prontos. Não use este projeto para enviar relatórios
+> reais antes de concluir e validar essas etapas.
 
 ## O que já funciona
 
@@ -17,8 +17,10 @@ Tutory e, nas próximas etapas, gerar os relatórios mensais de evolução da Ka
 - armazenamento local em SQLite;
 - proteção do telefone armazenado;
 - execução retomável: uma interrupção não refaz relatórios já concluídos;
-- bloqueio individual de telefone inválido, sem interromper o restante do lote;
-- comandos de diagnóstico, criação, extração e consulta do ciclo.
+- telefone inválido bloqueia somente a entrega, sem impedir a extração acadêmica;
+- exportação de um registro por aluno, inclusive quando os dados estão bloqueados ou pendentes;
+- cálculos derivados sem inventar métricas ausentes;
+- comandos de diagnóstico, criação, extração, consulta e exportação do ciclo.
 
 ## Preparação do ambiente
 
@@ -65,6 +67,7 @@ uv run kairos-report doctor
 uv run kairos-report run create --month 2026-08
 uv run kairos-report run extract --run 1
 uv run kairos-report run status --run 1
+uv run kairos-report data export --run 1
 ```
 
 O comando `doctor` não exibe credenciais. A rotina real deve começar com um aluno controlado e
@@ -86,6 +89,7 @@ ser incorporada à versão usada no ciclo mensal depois de aprovação humana.
 
 - [Arquitetura e fluxo aprovado](docs/architecture.md)
 - [Contrato observado da Tutory](docs/contracts/tutory-active-students.md)
+- [Contrato do pacote de dados do relatório](docs/contracts/report-data-package.md)
 - [Handoff operacional para o Hermes](HERMES_HANDOFF.md)
 
 ## Segurança e privacidade

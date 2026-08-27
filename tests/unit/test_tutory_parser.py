@@ -50,3 +50,23 @@ def test_parse_report_rejects_missing_chart_data_without_echoing_html() -> None:
         parse_report(html)
 
     assert "Aluno Exemplo" not in str(captured.value)
+
+
+@pytest.mark.parametrize(
+    ("original", "invalid"),
+    [
+        ("76,5%", "176,5%"),
+        ("horas: [8, 10.5]", "horas: [-8, 10.5]"),
+        ("percentuais: [58, 37]", "percentuais: [158, 37]"),
+    ],
+)
+def test_parse_report_rejects_out_of_range_metrics_without_exposing_student(
+    original: str,
+    invalid: str,
+) -> None:
+    html = FIXTURE.read_text(encoding="utf-8").replace(original, invalid, 1)
+
+    with pytest.raises(TutoryContractChanged) as captured:
+        parse_report(html)
+
+    assert "Aluno Exemplo" not in str(captured.value)

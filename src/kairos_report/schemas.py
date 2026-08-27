@@ -1,6 +1,11 @@
 from __future__ import annotations
 
+from typing import Annotated
+
 from pydantic import BaseModel, Field
+
+NonNegativeNumber = Annotated[float, Field(ge=0)]
+Percentage = Annotated[float, Field(ge=0, le=100)]
 
 
 class RunSummary(BaseModel):
@@ -23,31 +28,31 @@ class DeliveryItem(BaseModel):
 
 
 class RankedSubject(BaseModel):
-    rank: int
-    name: str
-    accuracy_percent: float
-    study_hours: float
+    rank: int = Field(ge=1)
+    name: str = Field(min_length=1)
+    accuracy_percent: Percentage
+    study_hours: NonNegativeNumber
 
 
 class WeeklyMetric(BaseModel):
-    label: str
-    hours: float
-    target_hours: float
-    peer_average_hours: float | None = None
+    label: str = Field(min_length=1)
+    hours: NonNegativeNumber
+    target_hours: NonNegativeNumber
+    peer_average_hours: NonNegativeNumber | None = None
 
 
 class StudentMetrics(BaseModel):
-    student_name: str
-    course: str
-    total_hours: float
-    accuracy_percent: float
-    plan_progress_percent: float
-    study_days: int
-    average_study_hours: float
-    most_studied_subject: str
-    least_studied_subject: str
+    student_name: str = Field(min_length=1)
+    course: str = Field(min_length=1)
+    total_hours: NonNegativeNumber
+    accuracy_percent: Percentage
+    plan_progress_percent: Percentage
+    study_days: int = Field(ge=0)
+    average_study_hours: NonNegativeNumber
+    most_studied_subject: str = Field(min_length=1)
+    least_studied_subject: str = Field(min_length=1)
     ranking: list[RankedSubject]
     weekly: list[WeeklyMetric]
-    modality_hours: dict[str, float]
-    subject_progress: dict[str, float]
-    performance_by_area: dict[str, float]
+    modality_hours: dict[str, NonNegativeNumber]
+    subject_progress: dict[str, Percentage]
+    performance_by_area: dict[str, Percentage]

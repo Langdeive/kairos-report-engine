@@ -4,6 +4,7 @@ import json
 import re
 from typing import Any
 
+from pydantic import ValidationError
 from selectolax.parser import HTMLParser, Node
 
 from kairos_report.errors import TutoryContractChanged
@@ -33,34 +34,41 @@ def parse_report(html: str) -> StudentMetrics:
             raise TutoryContractChanged(f"Tutory report is missing insight: {label}")
 
     chart_data = _parse_chart_data(tree)
-    weekly = _weekly_metrics(chart_data)
 
-    return StudentMetrics(
-        student_name=student_name,
-        course=course,
-        total_hours=_parse_hours(metrics["total de horas"], "Total de Horas"),
-        accuracy_percent=_parse_number(metrics["% de acertos"], "% de acertos"),
-        plan_progress_percent=_parse_number(metrics["progresso geral"], "Progresso Geral"),
-        study_days=int(_parse_number(metrics["dias de estudo"], "Dias de Estudo")),
-        average_study_hours=_parse_hours(insights["média de tempo"], "Média de tempo"),
-        most_studied_subject=insights["matéria mais estudada"],
-        least_studied_subject=insights["matéria menos estudada"],
-        ranking=_parse_ranking(tree),
-        weekly=weekly,
-        modality_hours=_number_mapping(chart_data.get("modalidades"), "modalidades"),
-        subject_progress=_paired_mapping(
-            _mapping(chart_data, "progressoDisciplina"),
-            "disciplinas",
-            "percentuais",
-            "progressoDisciplina",
-        ),
-        performance_by_area=_paired_mapping(
-            _mapping(chart_data, "performance"),
-            "disciplinas",
-            "valores",
-            "performance",
-        ),
-    )
+    try:
+        weekly = _weekly_metrics(chart_data)
+        return StudentMetrics(
+            student_name=student_name,
+            course=course,
+            total_hours=_parse_hours(metrics["total de horas"], "Total de Horas"),
+            accuracy_percent=_parse_number(metrics["% de acertos"], "% de acertos"),
+            plan_progress_percent=_parse_number(
+                metrics["progresso geral"], "Progresso Geral"
+            ),
+            study_days=int(_parse_number(metrics["dias de estudo"], "Dias de Estudo")),
+            average_study_hours=_parse_hours(
+                insights["média de tempo"], "Média de tempo"
+            ),
+            most_studied_subject=insights["matéria mais estudada"],
+            least_studied_subject=insights["matéria menos estudada"],
+            ranking=_parse_ranking(tree),
+            weekly=weekly,
+            modality_hours=_number_mapping(chart_data.get("modalidades"), "modalidades"),
+            subject_progress=_paired_mapping(
+                _mapping(chart_data, "progressoDisciplina"),
+                "disciplinas",
+                "percentuais",
+                "progressoDisciplina",
+            ),
+            performance_by_area=_paired_mapping(
+                _mapping(chart_data, "performance"),
+                "disciplinas",
+                "valores",
+                "performance",
+            ),
+        )
+    except ValidationError as exc:
+        raise TutoryContractChanged("Tutory report contains out-of-range metrics") from exc
 
 
 def _required_text(node: Node | None, field: str) -> str:

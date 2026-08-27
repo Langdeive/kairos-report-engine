@@ -112,6 +112,11 @@ Converte dados da Tutory para um formato independente da plataforma:
 
 O identificador da Tutory será a chave principal do aluno. Nomes não serão usados como identidade.
 
+Depois da normalização, a ferramenta produzirá um pacote canônico versionado, com exatamente um
+registro por aluno do ciclo. O registro separará o estado dos dados do estado da futura entrega,
+para que telefone inválido não impeça a análise acadêmica. Métricas que a Tutory não fornece serão
+marcadas como indisponíveis, nunca preenchidas por estimativa.
+
 ### 5.3. Comentários do Hermes
 
 A ferramenta não chamará outra API de IA. O próprio Hermes produzirá comentários a partir de um arquivo estruturado com fatos permitidos.
