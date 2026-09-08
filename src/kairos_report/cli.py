@@ -227,15 +227,19 @@ def report_generate_live(
         period_start,
         period_end,
         models=("desempenho", "questoes", "aluno"),
+        grouping="dia",
     )
-    metrics = parse_report(bundle.documents["desempenho"])
+    metrics = parse_report(bundle.documents["desempenho"],
+                           period_start=period_start, period_end=period_end)
     package = build_report_data(
         report_id=1,
         period_start=period_start,
         period_end=period_end,
         metrics=metrics,
-        questions=parse_question_report(bundle.documents["questoes"]),
+        questions=parse_question_report(bundle.documents["questoes"],
+                                         period_start=period_start, period_end=period_end),
         student_activity=parse_student_activity_report(bundle.documents["aluno"]),
+        require_monthly_source=True,
     )
 
     data_output.parent.mkdir(parents=True, exist_ok=True)

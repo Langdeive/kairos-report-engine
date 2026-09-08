@@ -171,10 +171,21 @@ Use um único diretório de dados para coordenar execuções da mesma conta. Nã
 paralelos da mesma conta apontando para diretórios diferentes: a trava local não é global.
 Autenticação inválida ou falhas repetidas interrompem a extração; diagnostique antes de retomar.
 
-Registros antigos sem questões continuam legíveis e mostram indisponibilidade no PDF. Para
-obter as três fontes, crie um novo ciclo do mês; ele produzirá uma nova revisão por aluno.
+### Dados antigos e comprovação do mês
+
+Não use os cards gerais da Tutory como prova de horas ou dias estudados no mês: eles podem
+trazer valores acumulados. A extração mensal protegida deve calcular esses números a partir
+das datas diárias do período solicitado. A apresentação continua em quatro grupos mensais.
+
+Registros antigos continuam legíveis para auditoria e prévias offline. Contudo, sem a origem
+mensal validada, ficam bloqueados para nova geração automática e para prontidão de entrega,
+mesmo que uma versão anterior os tenha marcado como válidos ou aprovados. Para obter a
+evidência mensal e as três fontes, crie um novo ciclo; ele produzirá nova revisão por aluno.
+Não altere o banco antigo nem mude apenas o mês de dados já extraídos. Relatórios enviados
+continuam enviados e não devem ser reenviados por causa dessa atualização.
+
 Não use ausência de detalhamento como evidência de que o aluno não estudou. A última revisão
-está documentada em `docs/review-2026-09-05.md`.
+anterior a esse ajuste está documentada em `docs/review-2026-09-05.md`.
 
 ## Regras que não podem ser quebradas
 

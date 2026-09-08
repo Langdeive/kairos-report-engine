@@ -92,13 +92,8 @@ def test_batch_extract_export_and_pdf_preserve_questions_and_activity(
     test_settings: Settings,
     tmp_path: Path,
 ) -> None:
-    service, client = build_service(test_settings, [TutoryStudent(id="s1", name="Exemplo")])
-    documents = client.generate_report_bundle.return_value.documents
-    documents['desempenho'] = documents['desempenho'].replace(
-        'Semana 32/2026', 'Semana 30/2026'
-    ).replace('Semana 31/2026', 'Semana 29/2026')
-    # The captured question fixture contains July ISO weeks 27-31.
-    run = service.create(date(2026, 7, 1), date(2026, 7, 31), "test", "approved")
+    service, _ = build_service(test_settings, [TutoryStudent(id="s1", name="Exemplo")])
+    run = service.create(date(2026, 8, 1), date(2026, 8, 31), "test", "approved")
     service.extract(run.id)
     data_service = ReportDataService(test_settings)
     result = data_service.generate(run.id, tmp_path / "reports")

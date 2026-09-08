@@ -29,6 +29,7 @@ from kairos_report.models import (
 )
 from kairos_report.runs.service import RunService
 from kairos_report.tutory.client import ReportBundle, TutoryStudent
+from tests.daily_fixtures import performance_html, question_html
 
 FIXTURE = Path(__file__).parents[1] / "fixtures" / "tutory" / "report_page.html"
 
@@ -48,8 +49,9 @@ def build_service(settings: Settings, students: list[TutoryStudent]) -> tuple[Ru
     client.generate_report_bundle.return_value = ReportBundle(
         key="report-key",
         documents={
-            "desempenho": FIXTURE.read_text(encoding="utf-8"),
-            "questoes": FIXTURE.with_name("question_report_page.html").read_text(encoding="utf-8"),
+            "desempenho": performance_html(),
+            "questoes": question_html(total=541, headline_correct=442,
+                                       correct=[400, 42], wrong=[90, 9]),
             "aluno": FIXTURE.with_name("student_report_page.html").read_text(encoding="utf-8"),
         },
     )
@@ -553,8 +555,9 @@ def test_batch_pause_is_applied_between_configured_groups(test_settings: Setting
     client.generate_report_bundle.return_value = ReportBundle(
         key="report-key",
         documents={
-            "desempenho": FIXTURE.read_text(encoding="utf-8"),
-            "questoes": FIXTURE.with_name("question_report_page.html").read_text(encoding="utf-8"),
+            "desempenho": performance_html(),
+            "questoes": question_html(total=541, headline_correct=442,
+                                       correct=[400, 42], wrong=[90, 9]),
             "aluno": FIXTURE.with_name("student_report_page.html").read_text(encoding="utf-8"),
         },
     )

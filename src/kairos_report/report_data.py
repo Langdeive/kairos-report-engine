@@ -6,6 +6,7 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 from kairos_report.schemas import (
+    PerformanceMonthlySource,
     QuestionMetrics,
     RankedSubject,
     StudentActivityMetrics,
@@ -69,6 +70,7 @@ class ReportDataPackage(BaseModel):
     unavailable_metrics: list[str]
     questions: QuestionMetrics | None = None
     student_activity: StudentActivityMetrics | None = None
+    monthly_source: PerformanceMonthlySource | None = None
 
 
 class ReportIssues(BaseModel):
@@ -94,7 +96,17 @@ def build_report_data(
     student_name: str | None = None,
     questions: QuestionMetrics | None = None,
     student_activity: StudentActivityMetrics | None = None,
+    require_monthly_source: bool = False,
 ) -> ReportDataPackage:
+    if require_monthly_source and (
+        metrics.monthly_source is None or questions is None or questions.monthly_source is None
+    ):
+        raise ValueError("monthly_source_unverified")
+    for source in (metrics.monthly_source, questions.monthly_source if questions else None):
+        if source is not None and (source.period_start, source.period_end) != (
+            period_start, period_end
+        ):
+            raise ValueError("Monthly source period does not match the report period")
     period_days = (period_end - period_start).days + 1
     if period_days <= 0:
         raise ValueError("period_end must not precede period_start")
@@ -176,5 +188,6 @@ def build_report_data(
             "most_improved_subject",
         ],
         questions=questions,
+        monthly_source=metrics.monthly_source,
         student_activity=student_activity,
     )

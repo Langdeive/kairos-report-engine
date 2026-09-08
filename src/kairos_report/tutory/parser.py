@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
+import math
 import re
+from datetime import date
 from typing import Any
 
 from pydantic import ValidationError
@@ -9,8 +11,10 @@ from selectolax.parser import HTMLParser, Node
 
 from kairos_report.errors import TutoryContractChanged
 from kairos_report.schemas import (
+    PerformanceMonthlySource,
     QuestionDisciplineMetric,
     QuestionMetrics,
+    QuestionMonthlySource,
     QuestionTopicMetric,
     QuestionWeekMetric,
     RankedSubject,
@@ -22,7 +26,10 @@ from kairos_report.schemas import (
 )
 
 
-def parse_report(html: str) -> StudentMetrics:
+def parse_report(
+    html: str, *, period_start: date | None = None, period_end: date | None = None,
+) -> StudentMetrics:
+    _validate_period(period_start, period_end)
     tree = HTMLParser(html)
     student_name = _required_text(tree.css_first(".aluno-details h4"), "student name")
     course_text = _required_text(tree.css_first(".aluno-details p"), "course")
@@ -48,19 +55,44 @@ def parse_report(html: str) -> StudentMetrics:
 
     try:
         weekly = _weekly_metrics(chart_data)
+        source = None
+        total_hours = _parse_hours(metrics["total de horas"], "Total de Horas")
+        study_days = int(_parse_number(metrics["dias de estudo"], "Dias de Estudo"))
+        average_hours = _parse_hours(insights["média de tempo"], "Média de tempo")
+        modalities = _number_mapping(chart_data.get("modalidades"), "modalidades")
+        if period_start is not None and period_end is not None:
+            dates = _daily_dates([item.label for item in weekly], period_start, period_end,
+                                 complete=True)
+            for item in weekly:
+                _nonnegative_finite([item.hours, item.target_hours])
+                if item.peer_average_hours is not None:
+                    _nonnegative_finite([item.peer_average_hours])
+            daily = [item for _, item in sorted(zip(dates, weekly, strict=True))]
+            source = PerformanceMonthlySource(period_start=period_start, period_end=period_end,
+                                              daily=daily)
+            total_hours = sum(item.hours for item in daily)
+            study_days = sum(item.hours > 0 for item in daily)
+            average_hours = total_hours / study_days if study_days else 0
+            _nonnegative_finite(list(modalities.values()))
+            if not math.isclose(sum(modalities.values()), total_hours, abs_tol=0.01):
+                raise TutoryContractChanged(
+                    "Tutory monthly modality hours do not match daily hours"
+                )
+            weekly = _performance_weeks(daily)
         return StudentMetrics(
             student_name=student_name,
             course=course,
-            total_hours=_parse_hours(metrics["total de horas"], "Total de Horas"),
+            total_hours=total_hours,
             accuracy_percent=_parse_number(metrics["% de acertos"], "% de acertos"),
             plan_progress_percent=_parse_number(metrics["progresso geral"], "Progresso Geral"),
-            study_days=int(_parse_number(metrics["dias de estudo"], "Dias de Estudo")),
-            average_study_hours=_parse_hours(insights["média de tempo"], "Média de tempo"),
+            study_days=study_days,
+            average_study_hours=average_hours,
             most_studied_subject=insights["matéria mais estudada"],
             least_studied_subject=insights["matéria menos estudada"],
             ranking=_parse_ranking(tree),
             weekly=weekly,
-            modality_hours=_number_mapping(chart_data.get("modalidades"), "modalidades"),
+            modality_hours=modalities,
+            monthly_source=source,
             subject_progress=_paired_mapping(
                 _mapping(chart_data, "progressoDisciplina"),
                 "disciplinas",
@@ -78,7 +110,10 @@ def parse_report(html: str) -> StudentMetrics:
         raise TutoryContractChanged("Tutory report contains out-of-range metrics") from exc
 
 
-def parse_question_report(html: str) -> QuestionMetrics:
+def parse_question_report(
+    html: str, *, period_start: date | None = None, period_end: date | None = None,
+) -> QuestionMetrics:
+    _validate_period(period_start, period_end)
     tree = HTMLParser(html)
     panorama = [
         (card.css_first("h3") or card.css_first(".metric-value"))
@@ -116,6 +151,19 @@ def parse_question_report(html: str) -> QuestionMetrics:
     wrong_values = _dataset_numbers(weekly_block, "errad", "weekly wrong questions")
     if not (len(labels) == len(correct_values) == len(wrong_values)):
         raise TutoryContractChanged("Tutory question weekly series lengths differ")
+
+    source = None
+    if period_start is not None and period_end is not None:
+        _daily_dates(labels, period_start, period_end, complete=False)
+        counts = [*correct_values, *wrong_values]
+        if not blank_totals:
+            counts.extend(_parse_number(_required_text(node, "question count"), "question count")
+                          for node in panorama[:2])
+        _nonnegative_finite(counts)
+        if any(not value.is_integer() for value in counts):
+            raise TutoryContractChanged("Tutory daily question counts must be integers")
+        if sum(correct_values) != correct or sum(wrong_values) != total - correct:
+            raise TutoryContractChanged("Tutory daily question totals do not match headline totals")
 
     weekly = []
     for label, week_correct, week_wrong in zip(labels, correct_values, wrong_values, strict=True):
@@ -176,6 +224,13 @@ def parse_question_report(html: str) -> QuestionMetrics:
     ):
         raise TutoryContractChanged("Tutory blank question totals are not a confirmed empty report")
 
+    if period_start is not None and period_end is not None:
+        daily = sorted(weekly, key=lambda item: item.label)
+        source = QuestionMonthlySource(
+            period_start=period_start, period_end=period_end, daily=daily
+        )
+        weekly = _question_weeks(daily)
+
     try:
         return QuestionMetrics(
             total=total,
@@ -185,6 +240,7 @@ def parse_question_report(html: str) -> QuestionMetrics:
             weekly=weekly,
             disciplines=disciplines,
             topics=topics,
+            monthly_source=source,
         )
     except ValidationError as exc:
         raise TutoryContractChanged("Tutory question report contains out-of-range metrics") from exc
@@ -440,3 +496,71 @@ def _weekly_metrics(chart_data: dict[str, Any]) -> list[WeeklyMetric]:
         )
         for index, label in enumerate(labels)
     ]
+
+
+def _validate_period(start: date | None, end: date | None) -> None:
+    if start is None and end is None:
+        return  # Legacy diagnostic parsing has no verified monthly provenance.
+    if start is None or end is None or start > end or (start.year, start.month) != (
+        end.year, end.month
+    ):
+        raise TutoryContractChanged("Tutory daily normalization requires a single monthly period")
+
+
+def _daily_dates(labels: list[Any], start: date, end: date, *, complete: bool) -> list[date]:
+    days: list[date] = []
+    for label in labels:
+        if not isinstance(label, str) or not re.fullmatch(r"\d{4}/\d{2}/\d{2}", label):
+            raise TutoryContractChanged("Tutory daily source has an invalid date label")
+        try:
+            day = date.fromisoformat(label.replace("/", "-"))
+        except ValueError as exc:
+            raise TutoryContractChanged("Tutory daily source has an invalid date") from exc
+        if not start <= day <= end or day in days:
+            raise TutoryContractChanged("Tutory daily source has duplicate or out-of-period dates")
+        days.append(day)
+    if complete and len(days) != (end - start).days + 1:
+        raise TutoryContractChanged("Tutory daily performance axis is incomplete")
+    return days
+
+
+def _nonnegative_finite(values: list[float]) -> None:
+    if any(not math.isfinite(value) or value < 0 for value in values):
+        raise TutoryContractChanged("Tutory daily source has invalid numeric values")
+
+
+def _week_label(day_label: str) -> str:
+    day = date.fromisoformat(day_label.replace("/", "-"))
+    year, week, _ = day.isocalendar()
+    return f"Semana {week}/{year}"
+
+
+def _performance_weeks(daily: list[WeeklyMetric]) -> list[WeeklyMetric]:
+    weeks: dict[str, WeeklyMetric] = {}
+    for day in daily:
+        label = _week_label(day.label)
+        if label not in weeks:
+            weeks[label] = WeeklyMetric(label=label, hours=0, target_hours=0, peer_average_hours=0)
+        week = weeks[label]
+        week.hours += day.hours
+        week.target_hours += day.target_hours
+        if week.peer_average_hours is not None and day.peer_average_hours is not None:
+            week.peer_average_hours += day.peer_average_hours
+        else:
+            week.peer_average_hours = None
+    return list(weeks.values())
+
+
+def _question_weeks(daily: list[QuestionWeekMetric]) -> list[QuestionWeekMetric]:
+    weeks: dict[str, QuestionWeekMetric] = {}
+    for day in daily:
+        label = _week_label(day.label)
+        if label not in weeks:
+            weeks[label] = QuestionWeekMetric(label=label, total=0, correct=0, wrong=0,
+                                               accuracy_percent=0)
+        week = weeks[label]
+        week.total += day.total
+        week.correct += day.correct
+        week.wrong += day.wrong
+        week.accuracy_percent = round(week.correct / week.total * 100, 2) if week.total else 0
+    return list(weeks.values())

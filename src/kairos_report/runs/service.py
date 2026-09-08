@@ -54,7 +54,8 @@ class TutoryGateway(Protocol):
     ) -> list[TutoryStudent]: ...
 
     def generate_report_bundle(
-        self, student_id: str, period_start: date, period_end: date
+        self, student_id: str, period_start: date, period_end: date,
+        *, grouping: Literal["mes", "semana", "dia"] = "semana",
     ) -> ReportBundle: ...
 
 
@@ -487,9 +488,13 @@ class RunService:
             self._audit_report(session, run_id, report_id, "report.generation_started")
 
         try:
-            bundle = self._tutory.generate_report_bundle(tutory_id, period_start, period_end)
-            metrics = parse_report(bundle.documents["desempenho"])
-            questions = parse_question_report(bundle.documents["questoes"])
+            bundle = self._tutory.generate_report_bundle(
+                tutory_id, period_start, period_end, grouping="dia"
+            )
+            metrics = parse_report(bundle.documents["desempenho"],
+                                   period_start=period_start, period_end=period_end)
+            questions = parse_question_report(bundle.documents["questoes"],
+                                             period_start=period_start, period_end=period_end)
             activity = parse_student_activity_report(bundle.documents["aluno"])
         except TutoryRetryPaused:
             raise

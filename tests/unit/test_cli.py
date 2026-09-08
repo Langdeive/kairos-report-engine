@@ -14,7 +14,8 @@ from kairos_report.db import create_engine_for, upgrade_database
 from kairos_report.errors import KairosReportError
 from kairos_report.models import ReportRun, ReportStatus, RunStatus, Student, StudentReport
 from kairos_report.tutory.client import ReportBundle
-from kairos_report.tutory.parser import parse_report
+from kairos_report.tutory.parser import parse_question_report, parse_report
+from tests.daily_fixtures import performance_html, question_html
 
 REPORT_FIXTURE = Path(__file__).parents[1] / "fixtures" / "tutory" / "report_page.html"
 QUESTION_FIXTURE = Path(__file__).parents[1] / "fixtures" / "tutory" / "question_report_page.html"
@@ -32,12 +33,15 @@ class FixtureLiveTutoryClient:
         _period_end: date,
         *,
         models: tuple[str, ...],
+        grouping: str = "semana",
     ) -> ReportBundle:
+        assert grouping == "dia"
         documents = {
-            "desempenho": REPORT_FIXTURE.read_text(encoding="utf-8")
-            .replace('Semana 32/2026', 'Semana 30/2026')
-            .replace('Semana 31/2026', 'Semana 29/2026'),
-            "questoes": QUESTION_FIXTURE.read_text(encoding="utf-8"),
+            "desempenho": performance_html(_period_start.year, _period_start.month),
+            "questoes": question_html(
+                labels=[f"{_period_start:%Y/%m/%d}", f"{_period_end:%Y/%m/%d}"],
+                total=541, headline_correct=442, correct=[400, 42], wrong=[90, 9],
+            ),
             "aluno": ACTIVITY_FIXTURE.read_text(encoding="utf-8"),
         }
         return ReportBundle(
@@ -174,9 +178,13 @@ def test_data_export_command_writes_the_canonical_student_package(
                 period_end=run.period_end,
                 revision=1,
                 status=ReportStatus.VALID,
-                metrics=parse_report(REPORT_FIXTURE.read_text(encoding="utf-8")).model_dump(
-                    mode="json"
-                ),
+                metrics={
+                    **parse_report(performance_html(), period_start=run.period_start,
+                                   period_end=run.period_end).model_dump(mode="json"),
+                    "questions": parse_question_report(
+                        question_html(), period_start=run.period_start, period_end=run.period_end
+                    ).model_dump(mode="json"),
+                },
             )
         )
         session.commit()
@@ -233,5 +241,7 @@ def test_report_generate_live_fetches_normalizes_and_renders_in_one_command(
     assert len(PdfReader(output).pages) == 5
     package = json.loads(data_output.read_text(encoding="utf-8"))
     assert package["questions"]["total"] == 541
+    assert package["summary"]["total_hours"] == 15
+    assert package["summary"]["study_days"] == 9
     assert package["student_activity"]["total_revisions"] == 3
     assert len(list(previews.glob("pagina-*.png"))) == len(PdfReader(output).pages)

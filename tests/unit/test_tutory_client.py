@@ -285,6 +285,29 @@ def test_generate_report_uses_bearer_and_fetches_html(test_settings: Settings) -
 
 
 @respx.mock
+@pytest.mark.parametrize("grouping", ["dia", "mes", "semana"])
+def test_generate_report_exposes_observed_grouping(test_settings: Settings, grouping: str) -> None:
+    generate = respx.post("https://admin.tutory.com.br/intent/cadastrar-relatorio-coach").mock(
+        return_value=httpx.Response(200, json={"result": True, "data": [{"token": "k1"}]})
+    )
+    respx.get("https://admin.tutory.com.br/documentos/relatorios/desempenho?key=k1").mock(
+        return_value=httpx.Response(200, text="<h1>Relatório sintético</h1>")
+    )
+    TutoryClient(test_settings).generate_report("s1", date(2026, 8, 1), date(2026, 8, 31),
+                                                grouping=grouping)
+    assert generate.calls[0].request.content.decode().endswith(f"agrupamento={grouping}")
+
+
+@respx.mock
+def test_unknown_grouping_is_rejected_before_network(test_settings: Settings) -> None:
+    with pytest.raises(ValueError, match="grouping"):
+        TutoryClient(test_settings).generate_report_bundle(
+            "s1", date(2026, 8, 1), date(2026, 8, 31), grouping="ano"
+        )
+    assert not respx.calls
+
+
+@respx.mock
 def test_generate_report_bundle_fetches_requested_models_with_one_key(
     test_settings: Settings,
 ) -> None:

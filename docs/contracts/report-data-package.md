@@ -33,6 +33,17 @@ O resumo retornado pelo comando informa:
 O telefone não faz parte deste arquivo. Telefone inválido mantém os dados acadêmicos disponíveis e
 marca apenas `delivery_status=blocked`.
 
+### Validação temporal
+
+Para exportação operacional pronta, as fontes de estudo e questões precisam conter evidência
+diária validada para o mesmo início e fim do ciclo. Totais de cards acumulados não comprovam o
+mês. Horas e dias estudados são calculados a partir da série diária; datas e somas são conferidas
+antes da ficha pronta. A série de estudo cobre todos os dias do período, inclusive zeros.
+
+Dados legados sem essa comprovação permanecem no banco para auditoria, mas sua exportação
+operacional é bloqueada. Um novo ciclo precisa obter a evidência correta. A revisão antiga não
+deve ser liberada simplesmente por ter status válido, aprovação ou PDF gravado anteriormente.
+
 ## Ficha acadêmica pronta
 
 ### Identificação
@@ -83,8 +94,10 @@ maior que zero.
 
 `questions` contém total, acertos, erros, taxa de acerto, série semanal, disciplinas e assuntos.
 `student_activity` contém estudos e revisões detalhados quando fornecidos pela fonte.
-Em registros legados essas fontes podem ser `null`: isso representa indisponibilidade, não zero.
-A série original é preservada no pacote; o PDF agrega em quatro grupos comuns sem perder totais.
+Em registros legados essas fontes podem ser `null`: isso representa indisponibilidade, não zero;
+esses registros não dispensam a validação temporal para uma nova exportação operacional pronta.
+A série diária validada é normalizada em semanas de calendário; o PDF agrega essas semanas em
+quatro grupos comuns sem perder totais. A evidência diária permanece nos dados persistidos.
 
 ## Métricas explicitamente indisponíveis
 

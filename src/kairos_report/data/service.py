@@ -134,6 +134,9 @@ class ReportDataService:
                     issues.append("already_sent")
                 elif report.status not in {ReportStatus.VALID, ReportStatus.APPROVED}:
                     issues.append("report_not_valid")
+                envelope = self._envelope(report)
+                if envelope.data_status != "ready":
+                    issues.extend(envelope.issues.data or ["report_data_not_ready"])
                 path = Path(report.pdf_path) if report.pdf_path else None
                 try:
                     if path is None or not path.is_file():
@@ -237,6 +240,7 @@ class ReportDataService:
                     period_start=report.period_start,
                     period_end=report.period_end,
                     metrics=metrics,
+                    require_monthly_source=True,
                     student_name=report.student.name,
                     questions=(
                         QuestionMetrics.model_validate(report.metrics["questions"])
@@ -249,9 +253,12 @@ class ReportDataService:
                         else None
                     ),
                 )
-            except (ValidationError, ValueError):
+            except (ValidationError, ValueError) as exc:
                 data_status = "blocked"
-                data_issues.append("stored_metrics_invalid")
+                data_issues.append(
+                    "monthly_source_unverified" if str(exc) == "monthly_source_unverified"
+                    else "stored_metrics_invalid"
+                )
             else:
                 data_status = "ready"
         elif report.status == ReportStatus.BLOCKED:

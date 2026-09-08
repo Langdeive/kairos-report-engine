@@ -46,6 +46,25 @@ totais, evolução, disciplinas e disponibilidade. Ausência não vira zero. Hor
 de fontes diferentes não são somadas sem verificar sua semântica.
 Telefone inválido bloqueia entrega, não extração acadêmica.
 
+### Evidência do período mensal
+
+Cards de resumo do provedor podem conter valores acumulados, mesmo quando o relatório
+solicita um mês. O adaptador deve usar séries com datas explícitas dentro do período:
+horas são a soma diária; dias estudados são datas distintas com horas positivas; média
+diária divide essas horas pelos dias estudados. Dias com questões não são automaticamente
+dias com horas registradas. As quatro faixas visuais continuam agregando os mesmos dados.
+
+A origem validada e seu período acompanham as métricas persistidas. A série de estudo
+deve cobrir o período inteiro, inclusive zeros explícitos; a de questões pode ser esparsa,
+desde que as datas sejam válidas e suas somas confiram com os totais. Eixo ausente, datas
+duplicadas ou valores fora do período não comprovam um mês sem atividade.
+
+Registros legados continuam legíveis para auditoria e prévias offline, mas não podem
+habilitar nova geração automática ou entrega sem evidência mensal verificável. Para
+recuperar essa evidência, crie um novo ciclo e extraia novamente; não reescreva os dados
+antigos nem apenas troque seu período. Relatórios já enviados permanecem registrados
+como enviados, nunca são liberados para reenvio por essa atualização.
+
 Um registro por aluno permanece visível, inclusive pendente ou bloqueado. Exportação completa
 de registros não significa todos válidos. Renderizar e reexportar usa dados persistidos.
 

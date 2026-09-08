@@ -12,6 +12,7 @@ from kairos_report.db import create_engine_for
 from kairos_report.models import Base, ReportStatus, StudentReport
 from kairos_report.runs.service import RunService
 from kairos_report.tutory.client import ReportBundle, TutoryStudent
+from tests.daily_fixtures import performance_html, question_html
 
 FIXTURE = Path(__file__).parents[1] / "fixtures" / "tutory" / "report_page.html"
 
@@ -24,11 +25,12 @@ def extracted_run(
         TutoryStudent(id=f"{student_prefix}s2", name="Bia Exemplo", raw_phone="invalid"),
     ]
     names = {student.id: student.name for student in students}
-    html = FIXTURE.read_text(encoding="utf-8")
+    html = performance_html()
     client = Mock()
     client.list_active_students.return_value = students
 
-    def document_for(student_id: str, _start: date, _end: date) -> ReportBundle:
+    def document_for(student_id: str, _start: date, _end: date, *, grouping: str) -> ReportBundle:
+        assert grouping == "dia"
         student_html = html.replace("Aluno Exemplo", names[student_id])
         if malformed_second and student_id == "s2":
             student_html = "<html>contrato alterado</html>"
@@ -36,9 +38,7 @@ def extracted_run(
             key=f"{student_id}-key",
             documents={
                 "desempenho": student_html,
-                "questoes": FIXTURE.with_name("question_report_page.html").read_text(
-                    encoding="utf-8"
-                ),
+                "questoes": question_html(),
                 "aluno": FIXTURE.with_name("student_report_page.html").read_text(encoding="utf-8"),
             },
         )

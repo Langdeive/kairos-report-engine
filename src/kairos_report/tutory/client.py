@@ -237,13 +237,15 @@ class TutoryClient:
             target[student.id] = student
 
     def generate_report(
-        self, student_id: str, period_start: date, period_end: date
+        self, student_id: str, period_start: date, period_end: date,
+        *, grouping: Literal["mes", "semana", "dia"] = "semana",
     ) -> ReportDocument:
         bundle = self.generate_report_bundle(
             student_id,
             period_start,
             period_end,
             models=("desempenho",),
+            grouping=grouping,
         )
         return ReportDocument(key=bundle.key, html=bundle.documents["desempenho"])
 
@@ -254,9 +256,12 @@ class TutoryClient:
         period_end: date,
         *,
         models: tuple[str, ...] = ("desempenho", "questoes", "aluno"),
+        grouping: Literal["mes", "semana", "dia"] = "semana",
     ) -> ReportBundle:
         if period_end < period_start:
             raise ValueError("period_end must not precede period_start")
+        if grouping not in {"mes", "semana", "dia"}:
+            raise ValueError("Unsupported Tutory report grouping")
         unknown_models = set(models) - self.DOCUMENT_PATHS.keys()
         if unknown_models:
             raise ValueError(f"Unsupported Tutory report models: {sorted(unknown_models)}")
@@ -267,7 +272,7 @@ class TutoryClient:
                 "alunos[]": student_id,
                 "dt_ini": period_start.strftime("%d/%m/%Y"),
                 "dt_fim": period_end.strftime("%d/%m/%Y"),
-                "agrupamento": "semana",
+                "agrupamento": grouping,
             }
             try:
                 response = self._request(

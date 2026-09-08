@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from typing import Annotated
+from datetime import date
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, Field
 
@@ -54,6 +55,16 @@ class WeeklyMetric(BaseModel):
     peer_average_hours: NonNegativeNumber | None = None
 
 
+class MonthlySource(BaseModel):
+    basis: Literal["verified_daily_v1"] = "verified_daily_v1"
+    period_start: date
+    period_end: date
+
+
+class PerformanceMonthlySource(MonthlySource):
+    daily: list[WeeklyMetric]
+
+
 class StudentMetrics(BaseModel):
     student_name: str = Field(min_length=1)
     course: str = Field(min_length=1)
@@ -69,6 +80,7 @@ class StudentMetrics(BaseModel):
     modality_hours: dict[str, NonNegativeNumber]
     subject_progress: dict[str, Percentage]
     performance_by_area: dict[str, Percentage]
+    monthly_source: PerformanceMonthlySource | None = None
 
 
 class QuestionWeekMetric(BaseModel):
@@ -93,6 +105,10 @@ class QuestionTopicMetric(BaseModel):
     accuracy_percent: Percentage
 
 
+class QuestionMonthlySource(MonthlySource):
+    daily: list[QuestionWeekMetric]
+
+
 class QuestionMetrics(BaseModel):
     total: int = Field(ge=0)
     correct: int = Field(ge=0)
@@ -101,6 +117,7 @@ class QuestionMetrics(BaseModel):
     weekly: list[QuestionWeekMetric]
     disciplines: list[QuestionDisciplineMetric]
     topics: list[QuestionTopicMetric]
+    monthly_source: QuestionMonthlySource | None = None
 
 
 class RevisionMetric(BaseModel):
