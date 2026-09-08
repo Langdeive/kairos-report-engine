@@ -13,9 +13,11 @@ dependencies = [
   "cryptography>=45,<47",
   "httpx>=0.28,<1",
   "jinja2>=3.1,<4",
+  "pillow>=11,<12",
   "playwright>=1.55,<2",
   "pydantic>=2.11,<3",
   "pypdf>=6,<7",
+  "reportlab>=4.4,<5",
   "selectolax>=0.3,<1",
   "sqlalchemy>=2.0,<3",
   "typer>=0.16,<1",
@@ -31,6 +33,7 @@ dev = [
   "pytest-cov>=6.2,<8",
   "respx>=0.22,<1",
   "ruff>=0.12,<1",
+  "types-reportlab>=4.4,<5",
 ]
 
 [tool.hatch.build.targets.wheel]
@@ -38,6 +41,7 @@ packages = ["src/kairos_report"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = ["."]
 addopts = "-q"
 
 [tool.ruff]
@@ -51,4 +55,3 @@ select = ["E", "F", "I", "UP", "B", "SIM"]
 python_version = "3.12"
 strict = true
 packages = ["kairos_report"]
-

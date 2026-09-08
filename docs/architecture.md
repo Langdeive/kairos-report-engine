@@ -1,400 +1,105 @@
 # Arquitetura — Kairós Report Engine
 
-**Status:** arquitetura aprovada  
-**Data:** 25/08/2026  
-**Nome interno sugerido:** `kairos-report-engine`  
-**Nome apresentado ao cliente:** Relatório de Evolução Kairós
-
-## 1. Objetivo
-
-Construir uma ferramenta local, instalada no mesmo ambiente do Hermes, para:
-
-1. consultar os alunos ativos na Tutory;
-2. extrair dados mensais e telefone de WhatsApp;
-3. entregar ao Hermes um contexto seguro para comentários personalizados;
-4. validar os comentários produzidos pelo Hermes;
-5. gerar PDFs padronizados;
-6. preparar um lote para aprovação;
-7. permitir que o Hermes solicite a aprovação pelo WhatsApp;
-8. entregar ao Hermes a fila aprovada para envio pelo Baileys;
-9. registrar resultados, falhas e histórico por 12 meses.
-
-O volume atual é de aproximadamente **274 alunos ativos**, com capacidade contratada para até **500 alunos ativos**. A arquitetura deverá suportar pelo menos 500 relatórios por ciclo sem mudança estrutural.
-
-## 2. Decisão central
-
-O Hermes será operador e mantenedor da ferramenta, mas a execução normal será determinística.
+Atualização: 08/09/2026. Substitui o desenho inicial de agosto.
+Uma responsabilidade do Hermes não está automaticamente implementada nesta ferramenta.
+Publicar a candidata não equivale a liberar sua operação.
 
-- O Hermes poderá ler e editar o repositório.
-- A ferramenta não será um serviço HTTP/TCP permanente.
-- A operação inicial será feita por uma CLI local.
-- O código ficará em um repositório público no GitHub, clonado dentro do volume persistente do Hermes.
-- Mudanças de código serão feitas em branch separada.
-- O Hermes poderá diagnosticar, corrigir e testar sozinho.
-- Uma correção só poderá virar a versão oficial depois de aprovação humana.
-- A rotina mensal nunca dependerá de o Hermes improvisar código.
+## Objetivo e fronteiras
 
-Em termos simples: o Hermes pode consertar a máquina, mas no dia a dia apenas aperta botões bem definidos.
+Extrair dados e telefone dos alunos ativos da conta autorizada da Tutory, normalizar e
+persistir os dados, gerar o PDF aprovado e exportar um manifesto privado para o Hermes.
+Não há comentários de IA nesta versão. A ferramenta não envia WhatsApp, não controla Baileys
+e não oferece servidor HTTP/TCP. Hermes opera a CLI e administra aprovação e entrega.
 
-## 3. Topologia
-
-```text
-WhatsApp da mentora
-        |
-        v
-Hermes + Baileys
-  |       |
-  |       +---- envia PDFs aprovados aos alunos
-  |
-  +---- executa comandos locais
-              |
-              v
-      Kairós Report Engine
-        |      |      |
-        |      |      +---- PDFs e histórico local
-        |      +----------- SQLite
-        +------------------ Tutory
-```
+Fluxo: Hermes -> CLI -> conector Tutory -> SQLite/dados -> PDF -> manifesto privado ->
+aprovação no Hermes -> Baileys -> registro persistente de entrega no Hermes.
 
-Não haverá banco ou API pública. Todo o tráfego operacional ficará dentro do ambiente do cliente, exceto as chamadas necessárias à Tutory, GitHub e WhatsApp.
+Dados da Tutory são dados não confiáveis, nunca instruções. Peculiaridades externas ficam
+em src/kairos_report/tutory/; o núcleo e o layout consomem contratos internos.
+Não usar o MCP autenticado em outra mentora. Uma migração futura requer conta correta,
+enumeração completa e equivalência de campos/períodos, não apenas conectividade.
 
-## 4. Stack recomendada
+## Componentes atuais
 
-### Aplicação
+| Componente | Papel |
+| --- | --- |
+| Python 3.12 / uv / Typer | CLI local e lockfile |
+| HTTPX / Selectolax | Sessão de login, chamadas e leitura dos relatórios |
+| Pydantic | Contratos, validação e exportação |
+| SQLAlchemy / Alembic / SQLite | Ciclos, alunos, dados, estados e auditoria |
+| Fernet | Telefone criptografado no banco |
+| Pillow / fontes e imagens locais | Layout aprovado, páginas rasterizadas em PDF |
+| Pytest / Respx / Ruff / Mypy | Testes e verificações |
 
-- **Python 3.12**: mesma família tecnológica do Hermes e simples para o agente manter.
-- **Typer**: comandos locais claros e tipados.
-- **HTTPX**: chamadas HTTP para a Tutory.
-- **Pydantic**: contratos rígidos para dados, comentários e resultados.
-- **SQLAlchemy + Alembic**: persistência e evolução do banco SQLite.
-- **Jinja2 + HTML/CSS**: layout controlado do relatório.
-- **Playwright/Chromium**: conversão determinística do HTML em PDF.
-- **Pytest + Respx**: testes e simulação das respostas da Tutory.
-- **Ruff + Mypy**: validação automática do código.
-- **Docker Compose**: instalação reproduzível sem expor uma porta de rede.
+O gerador aprovado não precisa do Chromium. Há um gerador técnico legado com ReportLab e
+dependências antigas de HTML/Playwright; não são o caminho do PDF aprovado. Não criar Docker,
+painel, Redis ou outro serviço apenas para substituir a chamada local da CLI.
 
-### Integração com Hermes
+## Dados e identidade
 
-- Uma skill local chamada `kairos-reports` ensinará o Hermes a operar e reparar a ferramenta.
-- A skill chamará somente comandos documentados.
-- Se futuramente houver vantagem, a CLI poderá receber uma camada MCP local por `stdio`, sem TCP e sem alterar o núcleo.
+O ID Tutory identifica o aluno; nome e posição na lista não são chaves. O período é congelado
+no ciclo. O total de ativos deve coincidir com a enumeração de IDs únicos; resultados
+limitados a 50 não são aceitos como conta inteira.
 
-## 5. Módulos
+Fontes acadêmicas: desempenho, questões e atividades. O pacote canônico separa identidade,
+totais, evolução, disciplinas e disponibilidade. Ausência não vira zero. Horas e questões
+de fontes diferentes não são somadas sem verificar sua semântica.
+Telefone inválido bloqueia entrega, não extração acadêmica.
 
-### 5.1. Conector Tutory
+Um registro por aluno permanece visível, inclusive pendente ou bloqueado. Exportação completa
+de registros não significa todos válidos. Renderizar e reexportar usa dados persistidos.
 
-Responsável por autenticação HTTP, consulta de alunos, geração do Relatório do Coach e leitura do HTML retornado. A listagem exige sessão criada por login; a geração do relatório usa o token de API.
+## PDF aprovado
 
-O fluxo já observado usa chamadas diretas ao backend, incluindo a geração de uma chave de relatório e a consulta do documento por essa chave. Esses detalhes ficarão isolados em `connectors/tutory/`, porque são a parte mais sujeita a mudanças.
+Capa clara com foto e ondas; páginas internas azul escuro. Cards de prioridades azuis,
+TRÊS e PIOR sublinhados em amarelo. Ativos substituíveis por parâmetros.
+Panorama mensal, constância/tempo, questões, três menores taxas elegíveis e mapa de assuntos.
+As três disciplinas exigem pelo menos dez questões; mapa em ordem de desempenho.
 
-Responsabilidades:
+Evolução usa quatro grupos mensais comuns, agregando trechos de calendário sem perder
+horas, metas ou questões. Taxas calculadas por acertos/questões, não média de percentuais.
+Sem horas/questões: mensagem adequada, sem gráficos vazios. Zero acertos com questões é
+válido. Muitos assuntos continuam em páginas extras.
 
-- listar alunos ativos;
-- obter o identificador interno do aluno;
-- extrair DDD e telefone da ficha do aluno em `/alunos/index?aid=<id>`;
-- gerar e baixar o relatório mensal;
-- converter a resposta da Tutory para um modelo interno estável;
-- detectar alterações de contrato;
-- nunca registrar senha, token ou HTML bruto em logs.
+## Persistência e atualização
 
-### 5.2. Normalizador
+KAIROS_DATA_DIR é privado e separado do código. Nunca trocar a chave Fernet ao atualizar.
+Backup inclui banco, arquivos e chave protegida; restauração em destino separado antes
+de promover candidata. Não reutilizar banco ou segredos de outro cliente.
 
-Converte dados da Tutory para um formato independente da plataforma:
+Preservar checkout e scripts do Hermes, conciliar patches e instalar commit exato em
+diretório separado. Wrapper operacional só muda após testes e aprovação.
+Rollback preserva compatibilidade de dados; migração incompatível exige restauração testada.
 
-- aluno e curso;
-- período;
-- horas e dias estudados;
-- consistência semanal;
-- assertividade geral e semanal;
-- desempenho por disciplina;
-- progresso geral, por disciplina e por modalidade;
-- telefone normalizado para WhatsApp.
+## Aprovação e entrega: contrato com Hermes
 
-O identificador da Tutory será a chave principal do aluno. Nomes não serão usados como identidade.
+Manifesto associa report_id, ID Tutory, nome, telefone, período, revisão, caminho e hash.
+ready_for_hermes significa aptidão técnica, não aprovação nem mensagem enviada.
+PDF e pacote acadêmico não incluem telefone; manifesto legível permanece privado.
 
-Depois da normalização, a ferramenta produzirá um pacote canônico versionado, com exatamente um
-registro por aluno do ciclo. O registro separará o estado dos dados do estado da futura entrega,
-para que telefone inválido não impeça a análise acadêmica. Métricas que a Tutory não fornece serão
-marcadas como indisponíveis, nunca preenchidas por estimativa.
+Hermes registra aprovação da lista e hashes, reserva entrega e persiste resultado.
+Deduplicação: conta + ID Tutory + período + revisão + hash. ID local pode se repetir em bancos
+diferentes. Trocar arquivo/destinatário exige nova conferência. Timeout após envio é incerto:
+conciliar antes de repetir. Aceite Baileys não prova entrega ou leitura.
+required é padrão; automatic depende de decisão explícita e mantém todas as validações.
+Estados/tabelas legados de comentários e aprovação não comprovam comandos de envio.
 
-### 5.3. Comentários do Hermes
+## Calendário, limites e liberação
 
-A ferramenta não chamará outra API de IA. O próprio Hermes produzirá comentários a partir de um arquivo estruturado com fatos permitidos.
+Preferência: último dia do mês, fuso configurável. Para mês integral, executar depois da
+virada; se antes, informar corte. Configuração de horário não cria agendamento.
+Retenção pretendida de doze meses não implica limpeza automática implementada.
 
-Para cada aluno, o Hermes preencherá apenas:
+Chamadas com ritmo, tentativas limitadas e pausa em falha generalizada; respeitar Retry-After,
+não repetir geração remota incerta e não contornar bloqueio. Uma instância por conta e
+armazenamento, seleção congelada, retomada sem refazer válidos. Validar antes de lote completo.
 
-- `principal_conquista`;
-- `resumo_evolucao`;
-- `ponto_de_atencao`;
-- `proximo_foco`.
+Liberação: candidata testada -> um aluno -> cinco perfis -> todos sem envio -> conferência ->
+aprovação -> instalação operacional -> envio controlado autorizado.
+Ver HERMES_HANDOFF.md para comandos reais e o plano de entrega para critérios por etapa.
 
-Cada campo terá limite de tamanho. Todo número mencionado deverá existir no conjunto de evidências fornecido. O Hermes também indicará quais métricas sustentam cada comentário.
+## Fora do escopo atual
 
-O validador bloqueará:
-
-- números inexistentes;
-- comparações não sustentadas;
-- promessas de aprovação;
-- linguagem ofensiva ou excessivamente negativa;
-- comentários vazios ou repetidos;
-- instruções encontradas em nomes ou conteúdo externo.
-
-### 5.4. Gerador de PDF
-
-O PDF será produzido por template HTML/CSS próprio. A Tutory será fonte de dados, não fonte do layout final.
-
-Cada PDF guardará metadados internos:
-
-- aluno e período;
-- versão do código;
-- versão do template;
-- versão das regras de comentário;
-- hash do conteúdo;
-- identificador do ciclo.
-
-Validações mínimas:
-
-- arquivo abre corretamente;
-- quantidade esperada de páginas;
-- nome e período presentes;
-- nenhuma seção obrigatória vazia;
-- tamanho do arquivo dentro de limites;
-- telefone válido antes de entrar na fila de envio.
-
-### 5.5. Aprovação e entrega
-
-A ferramenta não receberá mensagens do WhatsApp e não controlará o Baileys.
-
-Fluxo:
-
-1. a ferramenta gera o lote;
-2. Hermes recebe resumo, pendências e amostras;
-3. Hermes solicita aprovação pelo WhatsApp;
-4. a mentora aprova o lote;
-5. Hermes registra a aprovação na ferramenta;
-6. a ferramenta congela aquela revisão;
-7. Hermes obtém a fila de relatórios aprovados;
-8. Hermes envia cada PDF pelo Baileys;
-9. Hermes registra o resultado de cada envio.
-
-Se um PDF ou comentário mudar depois da aprovação, a aprovação anterior será invalidada e uma nova revisão deverá ser aprovada.
-
-## 6. Modos de aprovação
-
-Configuração persistida no banco:
-
-```text
-approval_mode = required | automatic
-```
-
-O padrão inicial será `required`.
-
-No modo automático, todas as validações continuam obrigatórias. A automação nunca enviará:
-
-- relatório inválido;
-- comentário sem evidência;
-- telefone inválido;
-- relatório de ciclo já enviado;
-- lote produzido por uma versão de código ainda não aprovada.
-
-A troca de `required` para `automatic` será uma ação sensível, explicitamente confirmada e registrada no histórico.
-
-## 7. Estados do ciclo
-
-```text
-created
-  -> extracting
-  -> awaiting_comments
-  -> validating
-  -> rendering
-  -> awaiting_approval
-  -> approved
-  -> delivering
-  -> completed_with_or_without_failures
-```
-
-Um relatório individual poderá ficar em `blocked` sem bloquear os demais.
-
-O lote mostrará sempre:
-
-- total esperado;
-- extraídos com sucesso;
-- PDFs válidos;
-- bloqueados;
-- aprovados;
-- enviados;
-- falhas de envio.
-
-## 8. Persistência
-
-### SQLite
-
-Tabelas principais:
-
-- `settings`: calendário, modo de aprovação e retenção;
-- `students`: ID Tutory, nome, telefone protegido e status;
-- `report_runs`: ciclo, período, versão e contadores;
-- `student_reports`: métricas, comentários, PDF, hash e validação;
-- `approvals`: lote, revisão, aprovador, origem e data;
-- `deliveries`: destino, tentativas, identificador Baileys e resultado;
-- `audit_events`: decisões e alterações importantes.
-
-### Arquivos
-
-```text
-/opt/data/kairos-reports/
-  database/
-  reports/YYYY-MM/
-  review/YYYY-MM/
-  diagnostics/
-  backups/
-```
-
-Retenção aprovada:
-
-- PDFs, comentários e métricas: **12 meses**;
-- respostas brutas temporárias da Tutory: apagadas após normalização;
-- segredos: nunca armazenados nos relatórios ou no Git.
-
-Com 500 alunos, 12 ciclos e PDFs de aproximadamente 2 MB, o ambiente deverá reservar cerca de 12 GB, além de margem para prévias e backups. Recomenda-se provisionar pelo menos 20 GB livres para o módulo.
-
-## 9. Calendário
-
-- Execução no último dia de cada mês.
-- Horário configurável por ambiente.
-- Finais de semana, feriados, fevereiro e anos bissextos tratados automaticamente.
-- O período será congelado no momento da geração.
-- Aprovação e envio podem ocorrer depois sem alterar os dados congelados.
-
-## 10. Idempotência e segurança contra duplicidade
-
-Cada relatório terá uma chave única formada por:
-
-```text
-student_id + period_start + period_end + revision
-```
-
-O mesmo relatório aprovado não poderá ser enviado duas vezes sem uma ação explícita de reenvio. O Hermes sempre consultará a fila de `approved + unsent`, nunca uma pasta genérica de PDFs.
-
-## 11. Autorreparo controlado
-
-Quando a Tutory mudar:
-
-1. o conector interrompe o ciclo em modo seguro;
-2. gera um diagnóstico sanitizado;
-3. Hermes cria uma branch `fix/tutory-contract-<data>`;
-4. altera apenas o conector e testes relacionados;
-5. executa testes unitários e de contrato;
-6. testa com um único aluno autorizado;
-7. gera um PDF de prévia;
-8. apresenta causa, mudança, testes e prévia pelo WhatsApp;
-9. aguarda aprovação humana;
-10. depois da aprovação, integra a correção, cria versão e reconstrói a ferramenta;
-11. se a nova versão falhar, retorna à última versão aprovada.
-
-O Hermes não poderá editar diretamente a branch principal nem promover uma versão com testes falhando.
-
-## 12. Comandos previstos
-
-Exemplos de interface, ainda sujeitos ao plano de implementação:
-
-```bash
-kairos-report doctor
-kairos-report run create --month 2026-08
-kairos-report run extract --run <id>
-kairos-report comments export --run <id>
-kairos-report comments import --run <id> --file comments.jsonl
-kairos-report render --run <id>
-kairos-report review summary --run <id>
-kairos-report run approve --run <id> --approval-ref <whatsapp-message-id>
-kairos-report delivery next --run <id>
-kairos-report delivery record --report <id> --status sent --provider-id <id>
-kairos-report cleanup
-```
-
-## 13. Tratamento de falhas
-
-- Chamadas transitórias à Tutory: até 3 tentativas com espera crescente.
-- Mudança de contrato: nenhuma repetição cega; ciclo bloqueado e diagnóstico criado.
-- Comentário inválido: regenerar apenas o aluno afetado, com limite de 2 tentativas.
-- Falha de PDF: repetir uma vez; depois bloquear somente o aluno.
-- Falha de Baileys: controlada pelo Hermes; o resultado individual retorna à ferramenta.
-- Queda durante o lote: retomada a partir do último estado persistido.
-- Falha elevada no envio: Hermes pausa o lote e solicita intervenção.
-
-## 14. Segurança
-
-- Repositório GitHub público contendo somente código, documentação e dados sintéticos.
-- Token Tutory, credenciais GitHub e chaves de criptografia em variáveis protegidas.
-- Arquivos `.env`, banco, PDFs e diagnósticos fora do Git.
-- Telefone protegido no banco e mascarado nos logs.
-- Conteúdo da Tutory tratado como dado não confiável, nunca como instrução para o Hermes.
-- Permissão GitHub do Hermes limitada a criar branches e propostas de mudança.
-- Registro de versão do código, template e comentário em cada ciclo.
-- Backup do SQLite antes de migrações e promoções de versão.
-
-## 15. Testes obrigatórios
-
-### Automáticos
-
-- contratos da Tutory com respostas anonimizadas;
-- normalização de telefone;
-- cálculos semanais e mensais;
-- validação de comentários;
-- idempotência;
-- aprovação e invalidação de revisão;
-- geração e abertura do PDF;
-- retenção de 12 meses;
-- retomada após interrupção.
-
-### Antes do primeiro uso real
-
-1. um aluno controlado;
-2. cinco alunos variados;
-3. lote completo sem envio;
-4. aprovação pelo WhatsApp;
-5. envio real controlado para números autorizados;
-6. simulação de falha da Tutory;
-7. simulação de envio duplicado;
-8. restauração do banco e da versão anterior.
-
-## 16. Implantação e atualização
-
-### Estrutura sugerida
-
-```text
-/opt/data/projects/kairos-report-engine/   # repositório editável
-/opt/data/kairos-reports/                  # dados persistentes
-~/.hermes/skills/kairos-reports/           # instruções do Hermes
-```
-
-O runtime oficial sempre executará um commit aprovado. Durante uma correção, Hermes trabalhará em branch separada e poderá testar a cópia alterada em modo de desenvolvimento. A versão mensal não muda até a promoção aprovada.
-
-## 17. Fora do escopo inicial
-
-- painel administrativo completo;
-- integração direta da ferramenta com Baileys;
-- serviço HTTP/TCP permanente;
-- suporte a vários clientes no mesmo banco;
-- comparação com outros alunos;
-- armazenamento indefinido de dados;
-- envio automático antes de validar alguns ciclos com aprovação.
-
-## 18. Critério de sucesso do MVP
-
-O MVP estará pronto quando conseguir, em um ambiente isolado:
-
-1. processar todos os alunos ativos da Tutory;
-2. gerar comentários do Hermes dentro do contrato;
-3. criar PDFs válidos e visualmente consistentes;
-4. produzir resumo e amostras para aprovação por lote;
-5. receber a aprovação gerenciada pelo Hermes;
-6. entregar uma fila sem duplicidade para envio via Baileys;
-7. registrar o resultado individual dos envios;
-8. retomar após falha sem refazer o lote inteiro;
-9. detectar mudança da Tutory e impedir envio incorreto;
-10. permitir correção pelo Hermes com testes e aprovação antes da promoção.
-
-## 19. Handoff operacional
-
-- `HERMES_HANDOFF.md`
+Comentários pedagógicos, painel, servidor permanente, múltiplas contas no mesmo banco,
+envio interno por Baileys, autorreparo promovido automaticamente e retenção indefinida.
+O agente propõe correções, mas não altera silenciosamente o código do ciclo em execução.

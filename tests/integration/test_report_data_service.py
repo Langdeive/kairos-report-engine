@@ -11,28 +11,39 @@ from kairos_report.data.service import ReportDataService
 from kairos_report.db import create_engine_for
 from kairos_report.models import Base, ReportStatus, StudentReport
 from kairos_report.runs.service import RunService
-from kairos_report.tutory.client import ReportDocument, TutoryStudent
+from kairos_report.tutory.client import ReportBundle, TutoryStudent
 
 FIXTURE = Path(__file__).parents[1] / "fixtures" / "tutory" / "report_page.html"
 
 
-def extracted_run(settings: Settings, *, malformed_second: bool = False) -> int:
+def extracted_run(
+    settings: Settings, *, malformed_second: bool = False, student_prefix: str = ""
+) -> int:
     students = [
-        TutoryStudent(id="s1", name="Ana Exemplo", raw_phone="(11) 99999-1111"),
-        TutoryStudent(id="s2", name="Bia Exemplo", raw_phone="invalid"),
+        TutoryStudent(id=f"{student_prefix}s1", name="Ana Exemplo", raw_phone="(11) 99999-1111"),
+        TutoryStudent(id=f"{student_prefix}s2", name="Bia Exemplo", raw_phone="invalid"),
     ]
     names = {student.id: student.name for student in students}
     html = FIXTURE.read_text(encoding="utf-8")
     client = Mock()
     client.list_active_students.return_value = students
 
-    def document_for(student_id: str, _start: date, _end: date) -> ReportDocument:
-        if malformed_second and student_id == "s2":
-            return ReportDocument(key="s2-key", html="<html>contrato alterado</html>")
+    def document_for(student_id: str, _start: date, _end: date) -> ReportBundle:
         student_html = html.replace("Aluno Exemplo", names[student_id])
-        return ReportDocument(key=f"{student_id}-key", html=student_html)
+        if malformed_second and student_id == "s2":
+            student_html = "<html>contrato alterado</html>"
+        return ReportBundle(
+            key=f"{student_id}-key",
+            documents={
+                "desempenho": student_html,
+                "questoes": FIXTURE.with_name("question_report_page.html").read_text(
+                    encoding="utf-8"
+                ),
+                "aluno": FIXTURE.with_name("student_report_page.html").read_text(encoding="utf-8"),
+            },
+        )
 
-    client.generate_report.side_effect = document_for
+    client.generate_report_bundle.side_effect = document_for
     engine = create_engine_for(settings)
     Base.metadata.create_all(engine)
     engine.dispose()
@@ -61,7 +72,7 @@ def test_export_contains_every_ready_student_without_phone_data(
     assert result.pending == 0
     assert result.delivery_blocked == 1
     assert result.output_path == (
-        test_settings.data_dir / "review" / "2026-08" / "report-data.jsonl"
+        test_settings.data_dir / "review" / "2026-08" / f"run-{run_id}" / "report-data.jsonl"
     )
     records = read_jsonl(result.output_path)
     assert len(records) == 2
@@ -72,6 +83,36 @@ def test_export_contains_every_ready_student_without_phone_data(
     serialized = result.output_path.read_text(encoding="utf-8")
     assert "99999-1111" not in serialized
     assert "phone_ciphertext" not in serialized
+
+
+def test_default_exports_keep_same_month_runs_independent(test_settings: Settings) -> None:
+    first_run_id = extracted_run(test_settings, student_prefix="first-")
+    second_run_id = extracted_run(test_settings, student_prefix="second-")
+    service = ReportDataService(test_settings)
+
+    first = service.export(first_run_id)
+    first_records = read_jsonl(first.output_path)
+    second = service.export(second_run_id)
+
+    assert first.output_path == (
+        test_settings.data_dir
+        / "review"
+        / "2026-08"
+        / f"run-{first_run_id}"
+        / "report-data.jsonl"
+    )
+    assert second.output_path == (
+        test_settings.data_dir
+        / "review"
+        / "2026-08"
+        / f"run-{second_run_id}"
+        / "report-data.jsonl"
+    )
+    assert first.output_path != second.output_path
+    assert read_jsonl(first.output_path) == first_records
+    assert {record["report_id"] for record in first_records}.isdisjoint(
+        record["report_id"] for record in read_jsonl(second.output_path)
+    )
 
 
 def test_export_keeps_blocked_students_visible_in_the_batch(

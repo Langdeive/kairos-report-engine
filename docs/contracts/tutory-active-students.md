@@ -1,24 +1,25 @@
 # Contrato observado: alunos ativos da Tutory
 
-Data da verificação: 25/08/2026.
+Data da última verificação: 27/08/2026.
 
 Este é um conector HTTP privado e monitorado, não uma API pública documentada pela Tutory.
-O navegador é necessário somente para descoberta ou renovação excepcional; a execução mensal usa
-requisições HTTP diretas.
+O navegador é necessário somente para redescobrir o contrato quando a Tutory mudar. A execução
+mensal e a renovação da sessão usam requisições HTTP diretas.
 
 ## Autenticação
 
 - `POST /intent/login`
 - Corpo `application/x-www-form-urlencoded`: `account`, `password`
 - A resposta estabelece a sessão usada nas consultas HTML seguintes.
-- O token de API permanece necessário para a geração do Relatório do Coach, mas sozinho não
-  autentica `GET /alunos/consulta`.
+- A página autenticada fornece a autorização usada pela geração do Relatório do Coach.
+- A ferramenta descobre essa autorização após o login; `TUTORY_API_TOKEN` fica apenas como opção
+  de compatibilidade e não é necessário na configuração normal.
 
 ## Total esperado
 
 - `GET /index`
 - O total ativo aparece no texto do elemento `role="progressbar"`, antes do percentual.
-- Na verificação, o painel mostrou **274 alunos ativos** de uma capacidade de 500.
+- Na verificação mais recente, o painel mostrou **279 alunos ativos**.
 
 ## Consulta
 
@@ -40,9 +41,9 @@ Não foi encontrada paginação funcional. Parâmetros comuns de página e limit
 4. Comparar o total deduplicado com o contador de ativos do painel e falhar de forma segura se
    houver qualquer diferença.
 
-Na evidência de 25/08/2026 havia 73 planos, apenas um atingiu o limite de 50 e a união final
-resultou exatamente nos **274 alunos ativos**. Nenhum nome, telefone, matrícula, e-mail, cookie,
-senha ou token foi salvo neste documento.
+Na evidência de 25/08/2026 havia 73 planos e apenas um atingiu o limite de 50. Em 27/08/2026, o
+login HTTP e a enumeração completa resultaram exatamente nos **279 alunos ativos** mostrados no
+painel. Nenhum nome, telefone, matrícula, e-mail, cookie, senha ou token foi salvo neste documento.
 
 ## Telefone
 

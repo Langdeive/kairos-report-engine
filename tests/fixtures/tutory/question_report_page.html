@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="pt-BR">
+  <body>
+    <h1>Relatório de Questões</h1>
+    <div class="main-numbers"><p>questões</p><h3>541</h3></div>
+    <div class="main-numbers"><p>acertos</p><h3>442</h3></div>
+    <div class="main-numbers"><p>% acertos</p><h3>81,7%</h3></div>
+    <canvas id="chart_questoes_dia"></canvas>
+    <canvas id="chart_bolha_questoes"></canvas>
+    <table id="tabela_questoes">
+      <tbody>
+        <tr><td>Direito Constitucional</td><td>Direitos políticos</td><td>100,0%</td></tr>
+        <tr><td>Direito Penal</td><td>Crimes contra a pessoa</td><td>86,7%</td></tr>
+      </tbody>
+    </table>
+    <script>
+      var chartQuestoesDia = new Chart(elChartQuestoesDia, {
+        type: 'line',
+        data: {
+          labels: ["Semana 27\/2026", "Semana 28\/2026"],
+          datasets: [
+            { label: 'questões corretas', data: [27, 83] },
+            { label: 'questões erradas', data: [11, 24] }
+          ]
+        }
+      });
+      var chartBolhaQuestoes = new Chart(elChartBolhaQuestoes, {
+        type: 'bubble',
+        data: { datasets: [
+          { backgroundColor: chartColors[0], label: 'Direito Constitucional', data: [{x: 51, y: 42, r: 8.23}] },
+          { backgroundColor: chartColors[1], label: 'Direito Penal', data: [{x: 78, y: 60, r: 7.69}] }
+        ] }
+      });
+    </script>
+  </body>
+</html>

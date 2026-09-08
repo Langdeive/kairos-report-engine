@@ -19,6 +19,8 @@ def test_settings(tmp_path: Path) -> Settings:
         tutory_password=SecretStr("test-password"),
         data_key=SecretStr(Fernet.generate_key().decode()),
         data_dir=tmp_path,
+        tutory_request_spacing_seconds=0,
+        batch_pause_seconds=0,
     )
 
 

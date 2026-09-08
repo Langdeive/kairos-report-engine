@@ -5,7 +5,12 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-from kairos_report.schemas import RankedSubject, StudentMetrics
+from kairos_report.schemas import (
+    QuestionMetrics,
+    RankedSubject,
+    StudentActivityMetrics,
+    StudentMetrics,
+)
 
 
 class ReportIdentity(BaseModel):
@@ -62,6 +67,8 @@ class ReportDataPackage(BaseModel):
     modalities: ModalityOverview
     performance_by_area: dict[str, float]
     unavailable_metrics: list[str]
+    questions: QuestionMetrics | None = None
+    student_activity: StudentActivityMetrics | None = None
 
 
 class ReportIssues(BaseModel):
@@ -85,6 +92,8 @@ def build_report_data(
     period_end: date,
     metrics: StudentMetrics,
     student_name: str | None = None,
+    questions: QuestionMetrics | None = None,
+    student_activity: StudentActivityMetrics | None = None,
 ) -> ReportDataPackage:
     period_days = (period_end - period_start).days + 1
     if period_days <= 0:
@@ -99,9 +108,7 @@ def build_report_data(
     total_weekly_hours = sum(week.hours for week in weeks)
     total_target_hours = sum(week.target_hours for week in weeks)
     adherence = (
-        round(total_weekly_hours / total_target_hours * 100, 2)
-        if total_target_hours > 0
-        else None
+        round(total_weekly_hours / total_target_hours * 100, 2) if total_target_hours > 0 else None
     )
 
     delta: float | None = None
@@ -138,7 +145,9 @@ def build_report_data(
             study_days=metrics.study_days,
             inactive_days=period_days - metrics.study_days,
             average_hours_per_active_day=metrics.average_study_hours,
-            accuracy_percent=metrics.accuracy_percent,
+            accuracy_percent=(
+                questions.accuracy_percent if questions is not None else metrics.accuracy_percent
+            ),
             plan_progress_percent=metrics.plan_progress_percent,
             remaining_progress_percent=round(100 - metrics.plan_progress_percent, 2),
         ),
@@ -163,7 +172,9 @@ def build_report_data(
         performance_by_area=metrics.performance_by_area,
         unavailable_metrics=[
             "active_days_by_week",
-            "accuracy_by_week",
+            *([] if questions is not None else ["accuracy_by_week"]),
             "most_improved_subject",
         ],
+        questions=questions,
+        student_activity=student_activity,
     )

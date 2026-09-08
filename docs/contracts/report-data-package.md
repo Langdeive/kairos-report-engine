@@ -7,7 +7,7 @@
 
 ## Objetivo
 
-Entregar ao Hermes e ao futuro gerador de PDF uma fonte única, validada e independente do layout.
+Entregar ao Hermes e ao gerador de PDF uma fonte única, validada e independente do layout.
 Cada linha representa um aluno do ciclo, inclusive quando seus dados estão pendentes ou bloqueados.
 Assim, a quantidade exportada nunca parece completa ocultando falhas individuais.
 
@@ -79,12 +79,19 @@ maior que zero.
 - total de horas nas modalidades;
 - participação percentual de cada modalidade.
 
+### Questões e atividades
+
+`questions` contém total, acertos, erros, taxa de acerto, série semanal, disciplinas e assuntos.
+`student_activity` contém estudos e revisões detalhados quando fornecidos pela fonte.
+Em registros legados essas fontes podem ser `null`: isso representa indisponibilidade, não zero.
+A série original é preservada no pacote; o PDF agrega em quatro grupos comuns sem perder totais.
+
 ## Métricas explicitamente indisponíveis
 
 Enquanto a Tutory não fornecer evidência suficiente, o pacote marca:
 
 - `active_days_by_week`;
-- `accuracy_by_week`;
+- `accuracy_by_week`, somente quando a fonte de questões não está disponível;
 - `most_improved_subject`.
 
 Essas informações não podem ser inventadas pelo Hermes nem inferidas pelo layout.
@@ -101,7 +108,7 @@ Essas informações não podem ser inventadas pelo Hermes nem inferidas pelo lay
 ## Local padrão
 
 ```text
-<KAIROS_DATA_DIR>/review/YYYY-MM/report-data.jsonl
+<KAIROS_DATA_DIR>/review/YYYY-MM/run-ID/report-data.jsonl
 ```
 
 É possível informar outro destino com `--output`. A gravação substitui o arquivo somente depois de
