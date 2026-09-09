@@ -1,3 +1,4 @@
+import re
 from datetime import UTC, date, datetime, timedelta
 from email.utils import format_datetime
 
@@ -33,6 +34,133 @@ def search_html(courses: list[str], students: list[tuple[str, str]]) -> str:
         for student_id, name in students
     )
     return f'<select name="curso"><option value="">All</option>{options}</select>{cards}'
+
+
+def coaching_html(page: int, last: int, student_ids: list[str]) -> str:
+    rows = "".join(
+        '<tr><td><input class="relatorio-aluno-check" type="checkbox" '
+        f'data-id="{student_id}"></td></tr>' for student_id in student_ids
+    )
+    return (
+        f'<table><tbody>{rows}</tbody></table><div class="admin-pagination">'
+        f'<a class="page-link active" href="#!">{page}</a>'
+        '<a class="page-link" href="?p=1&amp;curso=0">Primeira</a>'
+        f'<a class="page-link" href="?p={last}&amp;curso=0">Última</a></div>'
+    )
+
+
+@pytest.mark.parametrize("dashboard_count", [1, 3])
+@respx.mock
+def test_stale_dashboard_requires_matching_complete_roster(
+    test_settings: Settings, dashboard_count: int,
+) -> None:
+    respx.post("https://admin.tutory.com.br/intent/login").respond(200)
+    respx.get("https://admin.tutory.com.br/index").respond(
+        200, text=dashboard_html(dashboard_count)
+    )
+    respx.get("https://admin.tutory.com.br/alunos/consulta?status=ativos").respond(
+        200, text=search_html(["c1"], [])
+    )
+    respx.get("https://admin.tutory.com.br/alunos/consulta?status=ativos&curso=c1").respond(
+        200, text=search_html([], [("s1", "Ana"), ("s2", "Bruno")])
+    )
+    respx.get("https://admin.tutory.com.br/alunos/coaching").respond(
+        200, text=coaching_html(1, 1, ["s1", "s2"])
+    )
+    students = TutoryClient(test_settings).list_active_students()
+    assert [s.id for s in students] == ["s1", "s2"]
+
+
+@respx.mock
+def test_paged_roster_prevents_stale_total_from_truncating_active_selection(
+    test_settings: Settings, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(TutoryClient, "RESULT_LIMIT", 2)
+    monkeypatch.setattr(TutoryClient, "COACHING_PAGE_SIZE", 2, raising=False)
+    respx.post("https://admin.tutory.com.br/intent/login").respond(200)
+    respx.get("https://admin.tutory.com.br/index").respond(200, text=dashboard_html(2))
+    respx.get("https://admin.tutory.com.br/alunos/consulta?status=ativos").respond(
+        200, text=search_html(["c1"], [])
+    )
+    respx.get("https://admin.tutory.com.br/alunos/consulta?status=ativos&curso=c1").respond(
+        200, text=search_html([], [("s1", "Ana"), ("s2", "Bruno")])
+    )
+    respx.get("https://admin.tutory.com.br/alunos/consulta?status=ativos&curso=c1&nome=A").respond(
+        200, text=search_html([], [("s1", "Ana"), ("s2", "Bruno")])
+    )
+    respx.get("https://admin.tutory.com.br/alunos/consulta?status=ativos&curso=c1&nome=B").respond(
+        200, text=search_html([], [("s3", "Beatriz")])
+    )
+    respx.get(re.compile(r"https://admin\.tutory\.com\.br/alunos/coaching$")).respond(
+        200, text=coaching_html(1, 2, ["s1", "s2"])
+    )
+    respx.get("https://admin.tutory.com.br/alunos/coaching?p=2&curso=0").respond(
+        200, text=coaching_html(2, 2, ["s3"])
+    )
+    assert [s.id for s in TutoryClient(test_settings).list_active_students()] == [
+        "s1", "s2", "s3"
+    ]
+
+
+@pytest.mark.parametrize("roster_ids", [["s1", "other"], ["s1"], ["s1", "s1"]])
+@respx.mock
+def test_roster_cardinality_does_not_replace_identity_validation(
+    test_settings: Settings, roster_ids: list[str],
+) -> None:
+    respx.post("https://admin.tutory.com.br/intent/login").respond(200)
+    respx.get("https://admin.tutory.com.br/index").respond(200, text=dashboard_html(1))
+    respx.get("https://admin.tutory.com.br/alunos/consulta?status=ativos").respond(
+        200, text=search_html(["c1"], [])
+    )
+    respx.get("https://admin.tutory.com.br/alunos/consulta?status=ativos&curso=c1").respond(
+        200, text=search_html([], [("s1", "Ana"), ("s2", "Bruno")])
+    )
+    respx.get("https://admin.tutory.com.br/alunos/coaching").respond(
+        200, text=coaching_html(1, 1, roster_ids)
+    )
+    with pytest.raises(TutoryContractChanged):
+        TutoryClient(test_settings).list_active_students()
+
+
+@pytest.mark.parametrize("html,page", [
+    ("<html>Login</html>", 1),
+    (coaching_html(1, 1, ["s1"]), 2),
+    (coaching_html(1, 2, ["s1"]), 1),
+    (coaching_html(2, 2, []), 2),
+    (coaching_html(1, 1, ["s1", "s1"]), 1),
+    (coaching_html(1, 1, [""]), 1),
+    (coaching_html(1, 1001, ["s1"]), 1),
+    (coaching_html(1, 1, ["s1"]).replace("?p=1", "https://other.invalid/?p=1"), 1),
+    (coaching_html(1, 1, ["s1"]).replace("curso=0", "curso=1"), 1),
+    (coaching_html(1, 1, ["s1"]).replace("Última", "Próxima"), 1),
+])
+def test_incomplete_or_wrong_scope_coaching_page_is_rejected(
+    test_settings: Settings, html: str, page: int,
+) -> None:
+    with pytest.raises(TutoryContractChanged):
+        TutoryClient(test_settings)._parse_coaching_page(html, page=page)
+
+
+@pytest.mark.parametrize("second_page", [
+    coaching_html(2, 2, ["s1"]),
+    coaching_html(2, 3, ["s3", "s4"]),
+])
+@respx.mock
+def test_roster_changing_between_pages_is_blocked(
+    test_settings: Settings, monkeypatch: pytest.MonkeyPatch, second_page: str,
+) -> None:
+    monkeypatch.setattr(TutoryClient, "COACHING_PAGE_SIZE", 2)
+    respx.get(re.compile(r"https://admin\.tutory\.com\.br/alunos/coaching$")).respond(
+        200, text=coaching_html(1, 2, ["s1", "s2"])
+    )
+    respx.get("https://admin.tutory.com.br/alunos/coaching?p=2&curso=0").respond(
+        200, text=second_page
+    )
+    with (
+        httpx.Client(base_url=TutoryClient.BASE_URL) as http,
+        pytest.raises(TutoryContractChanged),
+    ):
+        TutoryClient(test_settings)._coaching_roster_ids(http)
 
 
 def test_extract_api_token_accepts_current_unquoted_javascript_key() -> None:
@@ -125,6 +253,9 @@ def test_list_active_students_subdivides_a_course_that_reaches_the_limit(
     respx.get("https://admin.tutory.com.br/alunos/consulta?status=ativos&curso=large&nome=B").mock(
         return_value=httpx.Response(200, text=search_html([], [("s3", "Bruna")]))
     )
+    respx.get("https://admin.tutory.com.br/alunos/coaching").respond(
+        200, text=coaching_html(1, 1, ["s1", "s2", "s3"])
+    )
 
     students = TutoryClient(test_settings).list_active_students()
 
@@ -146,6 +277,9 @@ def test_list_active_students_fails_closed_when_total_does_not_match(
     )
     respx.get("https://admin.tutory.com.br/alunos/consulta?status=ativos&curso=c1").mock(
         return_value=httpx.Response(200, text=search_html([], [("s1", "Ana")]))
+    )
+    respx.get("https://admin.tutory.com.br/alunos/coaching").respond(
+        200, text=coaching_html(1, 1, ["s1", "s2"])
     )
 
     with pytest.raises(TutoryContractChanged, match="expected 2, found 1"):
@@ -197,6 +331,9 @@ def test_list_active_students_filters_only_after_full_count_validation(
         200, text=search_html([], [("s1", "Ana"), ("s2", "Bia")])
     )
 
+    respx.get("https://admin.tutory.com.br/alunos/coaching").respond(
+        200, text=coaching_html(1, 1, ["s1", "s2", "s3"])
+    )
     with pytest.raises(TutoryContractChanged, match="expected 3, found 2"):
         TutoryClient(test_settings).list_active_students(
             student_ids=["s1"], include_phones=True

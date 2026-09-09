@@ -1,6 +1,6 @@
 # Contrato observado: alunos ativos da Tutory
 
-Data da última verificação: 27/08/2026.
+Data da última verificação: 09/09/2026.
 
 Este é um conector HTTP privado e monitorado, não uma API pública documentada pela Tutory.
 O navegador é necessário somente para redescobrir o contrato quando a Tutory mudar. A execução
@@ -19,7 +19,10 @@ mensal e a renovação da sessão usam requisições HTTP diretas.
 
 - `GET /index`
 - O total ativo aparece no texto do elemento `role="progressbar"`, antes do percentual.
-- Na verificação mais recente, o painel mostrou **279 alunos ativos**.
+- Esse indicador é a ocupação do plano e pode estar atrasado em relação aos cadastros.
+- Em 09/09, mostrou 289 enquanto a busca de ativos e a lista paginada de coaching continham
+  os mesmos 290 IDs. O registro adicional havia sido cadastrado no dia e aparecia ativo na
+  ficha e na busca; não aparecia na busca de inativos. Não usar esse número como constante.
 
 ## Consulta
 
@@ -36,10 +39,30 @@ Não foi encontrada paginação funcional. Parâmetros comuns de página e limit
 
 1. Consultar `status=ativos` e ler as opções de `select[name="curso"]`.
 2. Consultar `status=ativos&curso=<id>` para cada plano e deduplicar por ID Tutory.
-3. Quando um plano retornar exatamente 50 registros, subdividir esse plano com `nome=A` até
-   `nome=Z`, unindo novamente por ID.
-4. Comparar o total deduplicado com o contador de ativos do painel e falhar de forma segura se
-   houver qualquer diferença.
+3. Quando houver plano com 50 registros ou diferença do contador, consultar a seleção de
+   coaching completa, descrita abaixo. Subdividir planos saturados com `nome=A` até `nome=Z`,
+   unindo por ID, até obter exatamente os IDs da lista paginada. Não parar porque o contador
+   atrasado foi alcançado.
+4. Exigir igualdade dos conjuntos de IDs entre busca de ativos e seleção de coaching.
+   Sem essa comprovação, bloquear antes de consultar telefones ou gerar relatórios. Quando
+   as duas listas coincidem e apenas o painel diverge, registrar aviso com as contagens.
+5. Para consultas sem saturação e com total correto, preservar a conferência direta anterior.
+
+### Confirmação por paginação
+
+- `GET /alunos/coaching` retorna a primeira página, sem filtro de curso.
+- `.admin-pagination .page-link.active` identifica a página atual; o link `Última` declara
+  a página terminal. Links observados: `?p=2&curso=0`, `?p=3&curso=0`.
+- Cada linha de `tbody` tem um `input.relatorio-aluno-check[data-id]`.
+- Cada página não terminal contém 100 alunos; a última contém até 100. Em 09/09 foram
+  observados 100, 100 e 90, com 290 IDs únicos, iguais aos da busca explícita `status=ativos`.
+- O adaptador exige metadados válidos, escopo sem filtro, página solicitada correta e número
+  terminal estável. Páginas parciais, IDs vazios/duplicados, mudança do total de páginas,
+  destinos externos e divergências de identidade são falhas de contrato.
+- A consulta é limitada a 1.000 páginas por proteção operacional; atingir formato fora desse
+  contrato bloqueia com erro, sem truncar silenciosamente. Não é limite por cliente.
+- A lista de coaching não substitui a comprovação de status: os IDs precisam coincidir com
+  a consulta de ativos. Nenhum aluno é acrescentado apenas para igualar um contador.
 
 Na evidência de 25/08/2026 havia 73 planos e apenas um atingiu o limite de 50. Em 27/08/2026, o
 login HTTP e a enumeração completa resultaram exatamente nos **279 alunos ativos** mostrados no

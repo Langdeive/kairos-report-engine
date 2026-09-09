@@ -8,6 +8,7 @@ from dataclasses import dataclass, replace
 from datetime import UTC, date, datetime
 from email.utils import parsedate_to_datetime
 from typing import Any, Literal
+from urllib.parse import parse_qs, urlsplit
 
 import httpx
 from selectolax.parser import HTMLParser
@@ -61,6 +62,8 @@ class TutoryClient:
     STUDENT_SEARCH_PATH = "/alunos/consulta"
     STUDENT_DETAIL_PATH = "/alunos/index"
     RESULT_LIMIT = 50
+    COACHING_PAGE_SIZE = 100
+    MAX_COACHING_PAGES = 1000
 
     def __init__(
         self,
@@ -137,6 +140,13 @@ class TutoryClient:
                 if len(students) == self.RESULT_LIMIT:
                     saturated_courses.append(course_id)
 
+            # The plan-usage counter can lag behind today's enrolments. A paged
+            # roster proves completeness; the active search independently proves
+            # membership. Never replace either check with cardinality alone.
+            roster_ids: set[str] | None = None
+            if saturated_courses or len(students_by_id) != expected_count:
+                roster_ids = self._coaching_roster_ids(client)
+
             for course_id in saturated_courses:
                 for letter in "ABCDEFGHIJKLMNOPQRSTUVWXYZ":
                     page = self._request(
@@ -146,13 +156,24 @@ class TutoryClient:
                         params={"status": "ativos", "curso": course_id, "nome": letter},
                     )
                     self._merge_students(students_by_id, self._parse_students(page.text))
-                    if len(students_by_id) == expected_count:
+                    if students_by_id.keys() == roster_ids:
                         break
 
-            if len(students_by_id) != expected_count:
+            if roster_ids is not None and students_by_id.keys() != roster_ids:
+                raise TutoryContractChanged(
+                    "Active-student identities did not match the complete coaching roster: "
+                    f"expected {len(roster_ids)}, found {len(students_by_id)}"
+                )
+            if roster_ids is None and len(students_by_id) != expected_count:
                 raise TutoryContractChanged(
                     "Active-student enumeration did not match the dashboard total: "
                     f"expected {expected_count}, found {len(students_by_id)}"
+                )
+            if len(students_by_id) != expected_count:
+                logger.warning(
+                    "Tutory dashboard count is stale; complete roster and active search "
+                    "agree by ID (dashboard=%d, verified=%d)",
+                    expected_count, len(students_by_id),
                 )
             students = sorted(students_by_id.values(), key=lambda student: student.id)
             if requested_ids is not None:
@@ -163,6 +184,71 @@ class TutoryClient:
             if include_phones:
                 students = [self._student_with_phone(client, student) for student in students]
             return students
+
+    def _coaching_roster_ids(self, client: httpx.Client) -> set[str]:
+        response = self._request(client, "GET", self.COACHING_PATH)
+        ids, last_page = self._parse_coaching_page(response.text, page=1)
+        result = set(ids)
+        for page in range(2, last_page + 1):
+            response = self._request(
+                client, "GET", self.COACHING_PATH, params={"p": str(page), "curso": "0"}
+            )
+            page_ids, observed_last = self._parse_coaching_page(response.text, page=page)
+            if observed_last != last_page or result.intersection(page_ids):
+                raise TutoryContractChanged("Tutory coaching roster changed during pagination")
+            result.update(page_ids)
+        return result
+
+    def _parse_coaching_page(self, html: str, *, page: int) -> tuple[list[str], int]:
+        tree = HTMLParser(html)
+        pagination = tree.css_first(".admin-pagination")
+        body = tree.css_first("tbody")
+        active = tree.css_first(".admin-pagination .page-link.active")
+        if pagination is None or body is None or active is None:
+            raise TutoryContractChanged("Tutory coaching roster is missing pagination metadata")
+        if active.text(strip=True) != str(page):
+            raise TutoryContractChanged("Tutory coaching pagination returned the wrong page")
+        pages = {page}
+        declared_last: int | None = None
+        for link in pagination.css("a[href]"):
+            href = link.attributes.get("href") or ""
+            if href.startswith("#"):
+                continue
+            target = urlsplit(href)
+            query = parse_qs(target.query, keep_blank_values=True)
+            if (
+                target.netloc or target.scheme
+                or target.path not in ("", self.COACHING_PATH)
+                or set(query) != {"p", "curso"}
+                or query["curso"] != ["0"] or len(query["p"]) != 1
+                or not query["p"][0].isdigit()
+            ):
+                raise TutoryContractChanged("Tutory coaching pagination has an unexpected scope")
+            linked_page = int(query["p"][0])
+            if not 1 <= linked_page <= self.MAX_COACHING_PAGES:
+                raise TutoryContractChanged("Tutory coaching pagination exceeds its safety bound")
+            pages.add(linked_page)
+            if link.text(strip=True).casefold() in {"última", "ultima", "�ltima"}:
+                declared_last = linked_page
+        last_page = max(pages)
+        if declared_last != last_page:
+            raise TutoryContractChanged("Tutory coaching roster is missing its terminal page")
+        ids = []
+        for row in body.css("tr"):
+            checks = row.css("input.relatorio-aluno-check")
+            student_id = (checks[0].attributes.get("data-id") or "") if len(checks) == 1 else ""
+            if not student_id.strip():
+                raise TutoryContractChanged("Tutory coaching row is missing a unique student ID")
+            ids.append(student_id)
+        if len(ids) != len(set(ids)):
+            raise TutoryContractChanged("Tutory coaching roster has duplicate student IDs")
+        if (
+            len(ids) > self.COACHING_PAGE_SIZE
+            or (page < last_page and len(ids) != self.COACHING_PAGE_SIZE)
+            or (page > 1 and not ids)
+        ):
+            raise TutoryContractChanged("Tutory coaching roster contains an incomplete page")
+        return ids, last_page
 
     def _student_with_phone(self, client: httpx.Client, student: TutoryStudent) -> TutoryStudent:
         page = self._request(
