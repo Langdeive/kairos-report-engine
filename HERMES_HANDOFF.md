@@ -1,5 +1,63 @@
 # Handoff para o Hermes — Kairós Report Engine
 
+## Handoff ativo: Natane e Solveflow Hub
+
+O gerador continua sendo instalado e operado pelo Hermes. O Solveflow Hub é um serviço
+separado: recebe o PDF e os dados já calculados pelo gerador, coloca o pedido na fila oficial
+e conversa com a API do WhatsApp. O Hermes **não** usa Baileys nem chama a Meta diretamente.
+
+### O que já está pronto
+
+- O código deste gerador, incluindo os comandos `delivery`, está na branch `main`.
+- O Hub da Natane está disponível em `https://api-hub.2.25.117.237.sslip.io`.
+- O Hub tem armazenamento persistente para os PDFs, fila própria e painel em
+  `https://hub.2.25.117.237.sslip.io`.
+- O canal oficial, os templates aprovados e a integração `hermes-reports` permanecem
+  desativados até que a Meta aceite o domínio do painel e o número da Natane seja conectado.
+
+### O que o Hermes deve configurar localmente
+
+No ambiente privado do Hermes, configure somente estas variáveis. O token deve ser obtido
+diretamente do responsável pelo Hub; nunca deve ser copiado para este arquivo, para commits,
+logs ou comandos exibidos no terminal.
+
+```dotenv
+KAIROS_RUNTIME_URL=https://api-hub.2.25.117.237.sslip.io
+KAIROS_RUNTIME_TOKEN=<credencial-exclusiva-da-integracao-hermes-reports>
+KAIROS_APPROVAL_MODE=required
+```
+
+Depois de a origem ser ativada pelo administrador do Hub e haver pelo menos um template com
+cabeçalho de documento aprovado, valide apenas a conexão, sem gerar ou enviar mensagens:
+
+```sh
+uv run --env-file .env kairos-report delivery catalog --output /opt/data/catalog.json
+```
+
+Se o resultado trouxer zero templates, `integration_disabled`, `channel_not_allowed` ou
+`runtime_http_401`, pare. Esses estados indicam configuração pendente no Hub, não uma falha
+que deva ser contornada no Hermes.
+
+### Fluxo mensal depois da liberação
+
+1. Execute a extração e gere os PDFs normalmente.
+2. Consulte o catálogo atual. Escolha um template por aluno conforme os dados disponíveis.
+3. Prepare o plano e revise o texto, o PDF e os destinatários. Preparar não envia nada.
+4. Registre a aprovação do conteúdo exato e só então execute `delivery submit`.
+5. Consulte os recibos com `delivery status`. `accepted` não significa `delivered` ou `read`.
+
+Se ocorrer queda ou timeout, repita o mesmo `delivery submit` com o mesmo plano. A identidade
+do pedido é estável e evita duplicação. Não regenere PDF, plano ou chave para forçar reenvio.
+
+### Limites desta entrega
+
+O primeiro envio real só pode acontecer após: número oficial conectado no painel Meta, templates
+sincronizados e configurados, origem `hermes-reports` ativada para o canal correto, aprovação
+humana do plano e destinatário de teste autorizado. Até isso acontecer, o Hermes pode gerar PDFs
+e preparar dados, mas não deve submeter pedidos ao Runtime.
+
+---
+
 ## Missão
 
 Você será o operador e mantenedor local desta ferramenta. Ela transforma os dados do
