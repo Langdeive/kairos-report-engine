@@ -6,8 +6,9 @@ Tutory e gerar os relatórios mensais de evolução da Kairós Mentorias.
 > **Estado atual:** a extração direta da Tutory, a normalização, o pacote canônico de dados, a
 > retomada segura de lotes e o primeiro gerador com os layouts aprovados já estão implementados.
 > A primeira versão não exige comentários. O Hermes executa a extração, gera os PDFs e usa
-> a lista local de destinatários para enviar via Baileys. A ferramenta não envia mensagens;
-> aprovação, registro dos envios e prevenção de reenvios na operação ficam com o Hermes.
+> a lista local de destinatários para preparar pedidos ao Runtime pela API oficial.
+> Hermes escolhe o template e gerencia a aprovação; o Runtime mantém a fila e a entrega.
+> Veja [operação de entrega](docs/runtime-delivery.md). Preparar não significa enviar.
 
 ## O que já funciona
 
@@ -105,8 +106,8 @@ necessário ao envio e não deve ir para o GitHub. O PDF e o pacote acadêmico n
 
 Hermes deve usar somente os itens com `ready_for_hermes=true`; telefone inválido, PDF ausente
 ou alterado e registros marcados como enviados são sinalizados. A lista não é uma fila com
-reserva: o Hermes mantém seu próprio registro de envios e não deve reenviar a mesma combinação
-de conta, ID Tutory, período, revisão e `pdf_sha256`. O `report_id` identifica o registro
+reserva: a submissão explícita ao Runtime cria essa reserva usando uma identidade estável
+por conta, ID Tutory, período e revisão, com verificação do `pdf_sha256`. O `report_id` identifica o registro
 somente dentro daquele banco; pode se repetir em um banco de teste. Exportar novamente a lista
 não marca mensagens como enviadas. A aprovação precisa corresponder aos hashes atuais.
 `data export-delivery` permite atualizar a lista sem gerar os PDFs novamente. A saída do

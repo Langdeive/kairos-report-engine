@@ -15,6 +15,7 @@ import typer
 from kairos_report.config import Settings
 from kairos_report.data.service import ReportDataService
 from kairos_report.db import upgrade_database
+from kairos_report.delivery_cli import app as delivery_app
 from kairos_report.errors import KairosReportError
 from kairos_report.pdf import (
     ApprovedReportAssets,
@@ -37,6 +38,7 @@ report_app = typer.Typer(no_args_is_help=True, pretty_exceptions_show_locals=Fal
 app.add_typer(run_app, name="run")
 app.add_typer(data_app, name="data")
 app.add_typer(report_app, name="report")
+app.add_typer(delivery_app, name="delivery")
 
 
 @app.command()

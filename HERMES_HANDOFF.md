@@ -12,8 +12,9 @@ Repositório: <https://github.com/Langdeive/kairos-report-engine>
 ## Estado real do projeto
 
 Definição atual: **sem comentários nesta primeira versão**. Execute a ferramenta, gere os
-PDFs e prepare o manifesto local de destinatários. Envie pelo seu Baileys somente depois
-da validação do ciclo e da aprovação exigida; instalar ou testar não autoriza envio.
+PDFs e prepare o manifesto local de destinatários. A entrega usa o Runtime e a API oficial,
+conforme [o procedimento de entrega](docs/runtime-delivery.md), somente depois da validação
+do ciclo e da aprovação exigida; instalar ou testar não autoriza envio.
 A aprovação continua sob sua gestão conforme a configuração acordada com a mentora.
 
 Já está implementado e testado:
@@ -35,13 +36,14 @@ Já está implementado e testado:
 Ainda não está implementado:
 
 - aprovação do lote;
-- fila de entrega e registro do envio pelo Baileys;
+- ativação operacional da fila no Runtime da cliente;
 - agendamento para o último dia do mês;
 - empacotamento Docker e instalação como skill;
 - fluxo automatizado de diagnóstico e autorreparo.
 
-O fluxo da ferramenta termina no PDF e no manifesto local. Não espere comentários para gerar
-ou enviar. Aprovação e entrega são operadas pelo Hermes; gerar não significa enviar.
+O fluxo de geração termina no PDF e no manifesto local. Os comandos `delivery` acrescentam
+consulta de templates, preparação, submissão e acompanhamento no Runtime. Não espere
+comentários para gerar. Aprovação é operada pelo Hermes; gerar não significa enviar.
 
 ## Instalação
 
@@ -126,20 +128,19 @@ com aprovação humana.
    Confira `complete`, `generated` e `skipped_report_ids`. Esse comando não solicita aprovação.
 
 7. Abra o arquivo indicado por `delivery_manifest.output_path`. Para cada item com
-   `ready_for_hermes=true`, use o `phone` e o `pdf_path` do MESMO registro para enviar via
-   Baileys. O número contém país e DDD, somente dígitos. Não associe por posição nem pelo nome.
+   `ready_for_hermes=true`, consulte `report_data` e escolha um template do catálogo do Runtime.
+   O módulo de entrega associa `phone` e `pdf_path` do MESMO registro. Não associe por posição nem pelo nome.
    `ready_for_hermes` indica disponibilidade de telefone/PDF, não aprovação nem envio realizado.
    Aplique a aprovação gerenciada por você quando configurada.
 
-8. Registre o resultado e o identificador retornado pelo Baileys no seu controle, usando
-   conta + ID Tutory + período + revisão + `pdf_sha256` como referência contra reenvios.
-   `report_id` é apenas uma referência local ao banco. Não existe reserva automática
-   ou confirmação de entrega implementada nessa exportação. Não execute dois envios do mesmo
-   lote em paralelo. Itens com pendência ficam fora do envio, mas o PDF pode ter sido gerado.
+8. Use `delivery prepare`, revise o plano e depois `delivery submit` conforme o procedimento
+   de entrega. Guarde os recibos e consulte `delivery status`. A reserva é feita no Runtime,
+   com identidade estável por aluno, período e revisão. Itens com pendência ficam fora da
+   seleção, mas o PDF pode ter sido gerado. A exportação isolada não cria envios.
 
    Aprovação referencia o lote e hashes exatos; trocar PDF, aluno ou destino exige nova
-   conferência. Reserve cada entrega no seu registro persistente antes de enviar. Timeout após
-   envio é resultado incerto: concilie antes de repetir. Aceite pelo Baileys não prova entrega
+   conferência. Timeout ao registrar pedido permite repetir o MESMO plano. Timeout durante
+   envio à Meta é resultado incerto: concilie antes de repetir. Aceite pela Meta não prova entrega
    ou leitura. Revalide aluno ativo e destinatário antes de enviar lotes guardados por muito tempo.
 
 O manifesto contém telefones legíveis: mantenha-o no ambiente privado. Para atualizá-lo sem
@@ -204,8 +205,8 @@ anterior a esse ajuste está documentada em `docs/review-2026-09-05.md`.
 - Uma falha individual deve bloquear somente aquele aluno quando for seguro continuar.
 - Telefone inválido não bloqueia os dados acadêmicos; bloqueia somente a futura entrega.
 - Não crie serviço TCP ou painel web para esta fase. A integração com você é pela CLI local.
-- O Baileys, a aprovação e o registro persistente de envio continuam sob sua responsabilidade.
-  O manifesto atual não é fila de envio e não recebe confirmação do Baileys.
+- A escolha do template e a aprovação continuam sob sua responsabilidade. Fila, transmissão
+  e confirmação ficam no Runtime; o manifesto isolado não é fila. Não use Baileys neste fluxo.
 - Não envie o mesmo relatório duas vezes sem uma ação explícita de reenvio.
 
 ## Como alterar o código
