@@ -156,6 +156,9 @@ class ReportDataService:
                         "phone": phone,
                         "pdf_path": str(path.resolve()) if path else None,
                         "pdf_sha256": report.pdf_hash,
+                        "report_data": (
+                            envelope.data.model_dump(mode="json") if envelope.data else None
+                        ),
                         "ready_for_hermes": not issues,
                         "issues": issues,
                     }
