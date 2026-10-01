@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from kairos_report.config import Settings
 from kairos_report.crypto import PhoneCipher
 from kairos_report.db import session_factory_for
+from kairos_report.eligibility import EligibilityEvidence, EligibilityGuard, is_policy_exclusion
 from kairos_report.errors import (
     ExtractionCooldownError,
     ExtractionInProgressError,
@@ -46,6 +47,8 @@ from kairos_report.tutory.phone import normalize_brazil_phone
 
 
 class TutoryGateway(Protocol):
+    def report_eligibility(self, student_id: str) -> EligibilityEvidence: ...
+
     def list_active_students(
         self,
         *,
@@ -90,6 +93,7 @@ class RunService:
         self._phone_cipher = PhoneCipher(settings.data_key)
         self._sleep = sleep
         self._clock = clock or (lambda: datetime.now(UTC))
+        self._eligibility = EligibilityGuard(settings, tutory_client, clock=self._clock)
         self._batch_size = settings.batch_size
         self._batch_pause = settings.batch_pause_seconds
         self._max_upstream_failures = settings.max_consecutive_upstream_failures
@@ -484,6 +488,18 @@ class RunService:
             period_end = report.period_end
             run_id = run.id
 
+        reasons = self._eligibility.check(tutory_id)
+        if reasons:
+            with self._sessions.begin() as session:
+                stored = session.get(StudentReport, report_id)
+                if stored is not None and stored.status == ReportStatus.PENDING:
+                    stored.status = ReportStatus.BLOCKED
+                    stored.validation_errors = list(dict.fromkeys(
+                        [*stored.validation_errors, *reasons]
+                    ))
+                    self._audit_report(session, run_id, report_id, "report.eligibility_blocked")
+            return _ExtractionResult("blocked")
+
         with self._sessions.begin() as session:
             self._audit_report(session, run_id, report_id, "report.generation_started")
 
@@ -629,7 +645,7 @@ class RunService:
             elif summary.pending:
                 run.status = RunStatus.EXTRACTING
                 event_type = "run.extracting_incomplete"
-            elif summary.expected == 0:
+            elif summary.expected == 0 or summary.excluded == summary.expected:
                 run.status = RunStatus.COMPLETED
                 event_type = "run.completed_empty"
             elif summary.valid:
@@ -648,6 +664,7 @@ class RunService:
                     actor="system",
                     details={
                         "processed": summary.processed,
+                        "excluded": summary.excluded,
                         "pending": summary.pending,
                         "upstream_failures": summary.upstream_failures,
                         "auth_stopped": summary.auth_stopped,
@@ -700,6 +717,13 @@ class RunService:
         pending = count(ReportStatus.PENDING)
         approved = count(ReportStatus.APPROVED)
         sent = count(ReportStatus.SENT)
+        excluded = sum(
+            is_policy_exclusion(errors) for errors in session.scalars(
+                select(StudentReport.validation_errors).where(
+                    StudentReport.run_id == run.id, StudentReport.status == ReportStatus.BLOCKED,
+                )
+            )
+        )
         client_stats = getattr(self._tutory, "stats", {})
         if not isinstance(client_stats, dict):
             client_stats = {}
@@ -712,6 +736,7 @@ class RunService:
             extracted=valid,
             valid=valid,
             blocked=blocked,
+            excluded=excluded,
             approved=approved,
             sent=sent,
             failed=run.failed_count,

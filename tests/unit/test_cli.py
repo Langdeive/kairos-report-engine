@@ -11,6 +11,7 @@ from typer.testing import CliRunner
 from kairos_report.cli import app
 from kairos_report.config import Settings
 from kairos_report.db import create_engine_for, upgrade_database
+from kairos_report.eligibility import EligibilityEvidence
 from kairos_report.errors import KairosReportError
 from kairos_report.models import ReportRun, ReportStatus, RunStatus, Student, StudentReport
 from kairos_report.tutory.client import ReportBundle
@@ -25,6 +26,9 @@ ACTIVITY_FIXTURE = Path(__file__).parents[1] / "fixtures" / "tutory" / "student_
 class FixtureLiveTutoryClient:
     def __init__(self, _settings: Settings) -> None:
         pass
+
+    def report_eligibility(self, _student_id: str) -> EligibilityEvidence:
+        return EligibilityEvidence(date(2020, 1, 1), ())
 
     def generate_report_bundle(
         self,

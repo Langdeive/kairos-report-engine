@@ -21,6 +21,9 @@ def test_settings(tmp_path: Path) -> Settings:
         data_dir=tmp_path,
         tutory_request_spacing_seconds=0,
         batch_pause_seconds=0,
+        # Existing fixtures exercise legacy workflows without live Tutory access.
+        # Eligibility tests explicitly enable the production default.
+        report_eligibility_enabled=False,
     )
 
 

@@ -15,6 +15,7 @@ class RunSummary(BaseModel):
     extracted: int = Field(ge=0)
     valid: int = Field(ge=0)
     blocked: int = Field(ge=0)
+    excluded: int = Field(default=0, ge=0)
     approved: int = Field(ge=0)
     sent: int = Field(ge=0)
     failed: int = Field(ge=0)

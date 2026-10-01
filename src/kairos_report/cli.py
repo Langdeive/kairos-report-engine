@@ -16,6 +16,7 @@ from kairos_report.config import Settings
 from kairos_report.data.service import ReportDataService
 from kairos_report.db import upgrade_database
 from kairos_report.delivery_cli import app as delivery_app
+from kairos_report.eligibility import EligibilityGuard
 from kairos_report.errors import KairosReportError
 from kairos_report.pdf import (
     ApprovedReportAssets,
@@ -171,6 +172,10 @@ def report_generate(
 ) -> None:
     """Generate one PDF using the approved Kairós layouts."""
     data = ReportDataPackage.model_validate_json(input_path.read_text(encoding="utf-8"))
+    try:
+        _data_service().require_eligible_package(data)
+    except (KairosReportError, ValueError) as exc:
+        raise typer.BadParameter(str(exc)) from None
     bundled = default_approved_assets()
     result = generate_approved_report(
         data,
@@ -224,7 +229,14 @@ def report_generate_live(
     period_end = date(year, month_number, monthrange(year, month_number)[1])
 
     settings = Settings.load()
-    bundle = TutoryClient(settings).generate_report_bundle(
+    source = TutoryClient(settings)
+    try:
+        reasons = EligibilityGuard(settings, source).check(student_id)
+        if reasons:
+            raise typer.BadParameter(",".join(reasons))
+    except KairosReportError as exc:
+        raise typer.BadParameter(str(exc)) from None
+    bundle = source.generate_report_bundle(
         student_id,
         period_start,
         period_end,

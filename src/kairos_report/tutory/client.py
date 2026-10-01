@@ -14,6 +14,7 @@ import httpx
 from selectolax.parser import HTMLParser
 
 from kairos_report.config import Settings
+from kairos_report.eligibility import EligibilityEvidence
 from kairos_report.errors import (
     TutoryAuthenticationError,
     TutoryContractChanged,
@@ -61,6 +62,9 @@ class TutoryClient:
     COACHING_PATH = "/alunos/coaching"
     STUDENT_SEARCH_PATH = "/alunos/consulta"
     STUDENT_DETAIL_PATH = "/alunos/index"
+    STUDENT_PANEL_ACCESS = "https://app.tutory.com.br/intent/ver-painel"
+    STUDENT_PANEL_PATH = "https://app.tutory.com.br/painel/"
+    PAUSE_HISTORY_PATH = "https://app.tutory.com.br/painel/config/pausar-plano"
     RESULT_LIMIT = 50
     COACHING_PAGE_SIZE = 100
     MAX_COACHING_PAGES = 1000
@@ -274,6 +278,85 @@ class TutoryClient:
             self.LOGIN_PATH,
             data={"account": self._account, "password": self._password},
         )
+
+    def report_eligibility(self, student_id: str) -> EligibilityEvidence:
+        """Read enrolment and pause history; never create, remove or resume a pause."""
+        with httpx.Client(base_url=self.BASE_URL, timeout=30) as client:
+            self._login(client)
+            detail = self._request(
+                client, "GET", self.STUDENT_DETAIL_PATH, params={"aid": student_id}
+            )
+            tree = HTMLParser(detail.text)
+            dates = tree.css('input[name="data_inicio"]')
+            if len(dates) != 1:
+                raise TutoryContractChanged("Mentorship start date could not be confirmed")
+            joined_on = self._eligibility_date(dates[0].attributes.get("value") or "")
+            forms = tree.css(f'form[action="{self.STUDENT_PANEL_ACCESS}"]')
+            if len(forms) != 1:
+                raise TutoryContractChanged("Student panel access could not be confirmed")
+            fields: dict[str, str] = {}
+            for node in forms[0].css('input[name]'):
+                name = node.attributes.get("name") or ""
+                if name in fields:
+                    raise TutoryContractChanged("Student panel access has duplicate fields")
+                fields[name] = node.attributes.get("value") or ""
+            if (
+                set(fields) != {"id", "cpf", "adm_id", "token"}
+                or fields["id"] != student_id or not all(fields.values())
+            ):
+                raise TutoryContractChanged("Student panel identity could not be confirmed")
+            access = self._request(client, "POST", self.STUDENT_PANEL_ACCESS, data=fields)
+            # Follow only the verified panel destination; never forward credentials
+            # through arbitrary redirects from an upstream response.
+            if access.is_redirect:
+                location = urlsplit(access.headers.get("location", ""))
+                if (
+                    location.scheme not in {"", "https"}
+                    or location.netloc not in {"", "app.tutory.com.br"}
+                    or location.path not in {"/painel", "/painel/"}
+                    or location.query or location.fragment
+                ):
+                    raise TutoryContractChanged("Unexpected student panel redirect")
+                self._request(client, "GET", self.STUDENT_PANEL_PATH)
+            history = self._request(client, "GET", self.PAUSE_HISTORY_PATH)
+            return EligibilityEvidence(joined_on, self._parse_pause_history(history.text))
+
+    @staticmethod
+    def _eligibility_date(value: str) -> date:
+        if re.fullmatch(r"\d{2}/\d{2}/\d{4}", value.strip()) is None:
+            raise TutoryContractChanged("Invalid eligibility date")
+        try:
+            return datetime.strptime(value.strip(), "%d/%m/%Y").date()
+        except ValueError:
+            raise TutoryContractChanged("Invalid eligibility date") from None
+
+    @classmethod
+    def _parse_pause_history(cls, html: str) -> tuple[tuple[date, date], ...]:
+        tree = HTMLParser(html)
+        tables = [
+            table for table in tree.css("table")
+            if [node.text(strip=True) for node in table.css("th")] == ["Data", "Motivo", ""]
+        ]
+        empty = "Nenhuma pausa de plano cadastrada ainda" in tree.text()
+        if not tables and empty:
+            return ()
+        if len(tables) != 1 or empty:
+            raise TutoryContractChanged("Pause history could not be confirmed")
+        periods: list[tuple[date, date]] = []
+        for row in tables[0].css("tbody tr"):
+            cells = row.css("td")
+            if len(cells) != 3:
+                raise TutoryContractChanged("Invalid pause history row")
+            dates = re.findall(r"\d{2}/\d{2}/\d{4}", cells[0].text())
+            if len(dates) != 2:
+                raise TutoryContractChanged("Invalid pause period")
+            start, end = (cls._eligibility_date(value) for value in dates)
+            if start > end:
+                raise TutoryContractChanged("Invalid pause period")
+            periods.append((start, end))
+        if not periods:
+            raise TutoryContractChanged("Pause history is missing its empty-state marker")
+        return tuple(periods)
 
     @staticmethod
     def _parse_active_count(html: str) -> int:

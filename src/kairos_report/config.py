@@ -16,6 +16,8 @@ class Settings(BaseModel):
     approval_mode: Literal["required", "automatic"] = "required"
     retention_months: int = Field(default=12, ge=1, le=120)
     timezone: str = "America/Sao_Paulo"
+    report_eligibility_enabled: bool = True
+    mentorship_minimum_days: int = Field(default=15, ge=0, le=3650)
     run_time: str = "20:00"
     tutory_http_max_attempts: int = Field(default=3, ge=1, le=10)
     tutory_request_spacing_seconds: float = Field(default=1.0, ge=0, le=60)
@@ -49,6 +51,9 @@ class Settings(BaseModel):
             approval_mode=os.getenv("KAIROS_APPROVAL_MODE", "required"),  # type: ignore[arg-type]
             retention_months=int(os.getenv("KAIROS_RETENTION_MONTHS", "12")),
             timezone=os.getenv("KAIROS_TIMEZONE", "America/Sao_Paulo"),
+            report_eligibility_enabled=os.getenv("KAIROS_REPORT_ELIGIBILITY_ENABLED", "true")
+            .lower() not in {"false", "0", "no"},
+            mentorship_minimum_days=int(os.getenv("KAIROS_MENTORSHIP_MINIMUM_DAYS", "15")),
             run_time=os.getenv("KAIROS_RUN_TIME", "20:00"),
             tutory_http_max_attempts=int(os.getenv("TUTORY_HTTP_MAX_ATTEMPTS", "3")),
             tutory_request_spacing_seconds=float(

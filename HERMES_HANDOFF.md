@@ -319,3 +319,15 @@ O fluxo só estará pronto quando passar, nesta ordem:
 - restauração do banco e da última versão aprovada.
 
 Até lá, trate todo resultado como prévia técnica.
+
+## Exclusões de geração e entrega
+
+O gerador bloqueia plano pausado e entrada na mentoria há menos de 15 dias corridos,
+contados até o dia da geração no fuso configurado. A política está habilitada por padrão.
+Não é necessário adicionar variáveis ao `.env` para ativá-la; preserve a chave e a configuração.
+Consulte [Elegibilidade dos relatórios](docs/report-eligibility.md) para os motivos e parâmetros.
+
+`excluded` conta as exclusões previstas; elas também estão em `blocked` por compatibilidade.
+`eligibility_unverified` exige revisão e nunca libera geração ou envio. O manifesto e a
+submissão verificam a situação atual, inclusive para PDFs e planos de aprovação antigos.
+Atualizar o código no GitHub não atualiza automaticamente a instalação fixada do Hermes.

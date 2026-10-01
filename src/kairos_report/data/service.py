@@ -13,15 +13,18 @@ from sqlalchemy import select
 from kairos_report.config import Settings
 from kairos_report.crypto import PhoneCipher
 from kairos_report.db import session_factory_for
-from kairos_report.errors import InvalidPhone
+from kairos_report.eligibility import EligibilityGuard, EligibilitySource, is_policy_exclusion
+from kairos_report.errors import InvalidPhone, KairosReportError
 from kairos_report.models import ReportRun, ReportStatus, StudentReport
 from kairos_report.pdf import generate_approved_report
 from kairos_report.report_data import (
     ReportDataEnvelope,
+    ReportDataPackage,
     ReportIssues,
     build_report_data,
 )
 from kairos_report.schemas import QuestionMetrics, StudentActivityMetrics, StudentMetrics
+from kairos_report.tutory.client import TutoryClient
 from kairos_report.tutory.phone import normalize_brazil_phone
 
 
@@ -35,12 +38,33 @@ class DataExportResult(BaseModel):
     blocked: int = Field(ge=0)
     pending: int = Field(ge=0)
     delivery_blocked: int = Field(ge=0)
+    excluded: int = Field(default=0, ge=0)
 
 
 class ReportDataService:
-    def __init__(self, settings: Settings) -> None:
+    def __init__(
+        self, settings: Settings, *, eligibility_source: EligibilitySource | None = None,
+    ) -> None:
         self._settings = settings
         self._sessions = session_factory_for(settings)
+        self._eligibility = EligibilityGuard(settings, eligibility_source or TutoryClient(settings))
+
+    def require_eligible_package(self, data: ReportDataPackage) -> None:
+        """Prevent the single-file CLI from bypassing persisted recipient identity."""
+        if not self._settings.report_eligibility_enabled:
+            return
+        with self._sessions() as session:
+            report = session.get(StudentReport, data.identity.report_id)
+            if (
+                report is None or report.student.name != data.identity.student_name
+                or report.period_start != data.identity.period_start
+                or report.period_end != data.identity.period_end
+            ):
+                raise KairosReportError("eligibility_identity_unverified")
+            student_id = report.student.tutory_id
+        reasons = self._eligibility.check(student_id)
+        if reasons:
+            raise KairosReportError(",".join(reasons))
 
     def generate(self, run_id: int, output_dir: Path | None = None) -> dict[str, object]:
         """Generate review PDFs from persisted data, without changing approval state."""
@@ -57,6 +81,7 @@ class ReportDataService:
                 )
             )
             envelopes = [self._envelope(report) for report in reports]
+            student_ids = {report.id: report.student.tutory_id for report in reports}
             protected_ids = {
                 report.id
                 for report in reports
@@ -69,8 +94,14 @@ class ReportDataService:
                 / f"run-{run_id}"
                 / "pdf"
             )
+            persisted_exclusions = {
+                report.id: report.validation_errors for report in reports
+                if report.status == ReportStatus.BLOCKED
+                and is_policy_exclusion(report.validation_errors)
+            }
         generated: list[str] = []
         skipped: list[int] = []
+        exclusions: dict[int, list[str]] = dict(persisted_exclusions)
         for envelope in envelopes:
             if (
                 envelope.data_status != "ready"
@@ -78,6 +109,11 @@ class ReportDataService:
                 or envelope.report_id in protected_ids
             ):
                 skipped.append(envelope.report_id)
+                continue
+            reasons = self._eligibility.check(student_ids[envelope.report_id])
+            if reasons:
+                skipped.append(envelope.report_id)
+                exclusions[envelope.report_id] = reasons
                 continue
             output = destination / f"relatorio-{envelope.report_id}.pdf"
             generate_approved_report(envelope.data, output)
@@ -88,12 +124,16 @@ class ReportDataService:
                     report.pdf_path = str(output.resolve())
                     report.pdf_hash = digest
             generated.append(str(output.resolve()))
+        excluded = sum(is_policy_exclusion(reasons) for reasons in exclusions.values())
         return {
             "run_id": run_id,
             "expected": expected,
             "generated": len(generated),
-            "complete": len(generated) == expected and not skipped,
+            "complete": len(generated) + excluded == expected
+            and all(report_id in exclusions for report_id in skipped),
             "skipped_report_ids": skipped,
+            "eligibility_exclusions": exclusions,
+            "excluded": excluded,
             "pdf_paths": generated,
             "delivery_manifest": self.export_delivery(run_id),
         }
@@ -120,6 +160,8 @@ class ReportDataService:
                 .order_by(StudentReport.id)
             ):
                 issues: list[str] = []
+                if report.status in {ReportStatus.VALID, ReportStatus.APPROVED}:
+                    issues.extend(self._eligibility.check(report.student.tutory_id))
                 phone: str | None = None
                 if report.student.phone_ciphertext is None:
                     issues.append("missing_or_invalid_phone")
@@ -164,6 +206,7 @@ class ReportDataService:
                     }
                 )
         ready = sum(item["ready_for_hermes"] is True for item in items)
+        excluded = sum(is_policy_exclusion(item["issues"]) for item in items)  # type: ignore[arg-type]
         payload = {"schema_version": "1.0", "run_id": run_id, "items": items}
         destination.parent.mkdir(parents=True, exist_ok=True)
         with tempfile.NamedTemporaryFile(
@@ -183,7 +226,8 @@ class ReportDataService:
             "exported": len(items),
             "ready": ready,
             "blocked": len(items) - ready,
-            "complete": len(items) == expected and ready == expected,
+            "excluded": excluded,
+            "complete": len(items) == expected and ready + excluded == expected,
         }
 
     def export(self, run_id: int, output_path: Path | None = None) -> DataExportResult:
@@ -211,6 +255,10 @@ class ReportDataService:
         )
         self._write_jsonl(destination, envelopes)
         statuses = [envelope.data_status for envelope in envelopes]
+        excluded = sum(
+            report.status == ReportStatus.BLOCKED
+            and is_policy_exclusion(report.validation_errors) for report in reports
+        )
         ready = statuses.count("ready")
         blocked = statuses.count("blocked")
         pending = statuses.count("pending")
@@ -219,10 +267,11 @@ class ReportDataService:
             output_path=destination,
             expected=expected,
             exported=len(envelopes),
-            complete=(len(envelopes) == expected and blocked == 0 and pending == 0),
+            complete=(len(envelopes) == expected and blocked == excluded and pending == 0),
             ready=ready,
             blocked=blocked,
             pending=pending,
+            excluded=excluded,
             delivery_blocked=sum(envelope.delivery_status == "blocked" for envelope in envelopes),
         )
 

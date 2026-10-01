@@ -66,3 +66,17 @@ def test_settings_load_safe_http_and_batch_controls(
     assert settings.batch_size == 7
     assert settings.batch_pause_seconds == 12
     assert settings.max_consecutive_upstream_failures == 2
+
+
+def test_eligibility_defaults_enabled_and_accepts_threshold_override(
+    test_settings: Settings, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv('TUTORY_ACCOUNT', 'test-account')
+    monkeypatch.setenv('TUTORY_PASSWORD', 'test-password')
+    monkeypatch.setenv('KAIROS_DATA_KEY', 'test-only-key')
+    monkeypatch.delenv('KAIROS_REPORT_ELIGIBILITY_ENABLED', raising=False)
+    monkeypatch.delenv('KAIROS_MENTORSHIP_MINIMUM_DAYS', raising=False)
+    assert Settings.load().report_eligibility_enabled is True
+    assert Settings.load().mentorship_minimum_days == 15
+    monkeypatch.setenv('KAIROS_MENTORSHIP_MINIMUM_DAYS', '30')
+    assert Settings.load().mentorship_minimum_days == 30
