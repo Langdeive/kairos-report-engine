@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import date
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 NonNegativeNumber = Annotated[float, Field(ge=0)]
 Percentage = Annotated[float, Field(ge=0, le=100)]
@@ -100,10 +100,37 @@ class QuestionDisciplineMetric(BaseModel):
     accuracy_percent: Percentage
 
 
+class TopicSourcePeriod(BaseModel):
+    """Period binding for records; does not attest actual execution."""
+
+    period_start: date
+    period_end: date
+
+
 class QuestionTopicMetric(BaseModel):
     discipline: str = Field(min_length=1)
     topic: str = Field(min_length=1)
     accuracy_percent: Percentage
+    total: int | None = Field(default=None, ge=0, strict=True)
+    correct: int | None = Field(default=None, ge=0, strict=True)
+    wrong: int | None = Field(default=None, ge=0, strict=True)
+    execution_status: Literal["recorded", "confirmed", "placeholder", "unknown"] = "recorded"
+    source_period: TopicSourcePeriod | None = None
+
+    @model_validator(mode="after")
+    def consistent_counts(self) -> QuestionTopicMetric:
+        counts = (self.total, self.correct, self.wrong)
+        if any(value is not None for value in counts):
+            if self.total is None or self.correct is None or self.wrong is None:
+                raise ValueError("topic_counts_incomplete")
+            if self.correct + self.wrong != self.total:
+                raise ValueError("topic_counts_inconsistent")
+            expected = round(100 * self.correct / self.total, 2) if self.total else 0
+            if abs(self.accuracy_percent - expected) > 0.01:
+                raise ValueError("topic_accuracy_inconsistent")
+        if self.source_period and self.source_period.period_start > self.source_period.period_end:
+            raise ValueError("topic_period_inverted")
+        return self
 
 
 class QuestionMonthlySource(MonthlySource):

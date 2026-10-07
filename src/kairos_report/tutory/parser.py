@@ -9,6 +9,7 @@ from typing import Any
 from pydantic import ValidationError
 from selectolax.parser import HTMLParser, Node
 
+from kairos_report.analysis_provenance import ProvenanceError, enrich_topic_metrics
 from kairos_report.errors import TutoryContractChanged
 from kairos_report.schemas import (
     PerformanceMonthlySource,
@@ -112,6 +113,7 @@ def parse_report(
 
 def parse_question_report(
     html: str, *, period_start: date | None = None, period_end: date | None = None,
+    topic_launches_html: str | None = None,
 ) -> QuestionMetrics:
     _validate_period(period_start, period_end)
     tree = HTMLParser(html)
@@ -231,6 +233,21 @@ def parse_question_report(
         )
         weekly = _question_weeks(daily)
 
+    if topic_launches_html is not None:
+        if period_start is None or period_end is None:
+            raise TutoryContractChanged("topic_launch_period_required")
+        try:
+            topics = enrich_topic_metrics(
+                topic_launches_html, topics, period_start=period_start, period_end=period_end
+            )
+        except ProvenanceError as exc:
+            raise TutoryContractChanged(str(exc)) from None
+        topic_counts = (
+            sum(topic.total or 0 for topic in topics),
+            sum(topic.correct or 0 for topic in topics),
+        )
+        if topic_counts != (total, correct):
+            raise TutoryContractChanged("topic_launch_totals_mismatch")
     try:
         return QuestionMetrics(
             total=total,

@@ -41,7 +41,7 @@ class FakeRuntime:
                 "channel_id": "channel",
                 "version": "a" * 64,
                 "document_required": True,
-                "body": "Ola {{1}}, voce resolveu {{2}} questoes!",
+                "body": "Ola {{1}}, o relatorio registra {{2}} questoes!",
                 "parameters": [
                     {"slot": "1", "name": "nome", "description": "Nome"},
                     {"slot": "2", "name": "questoes", "description": "Questoes"},
@@ -84,6 +84,128 @@ def decision(template_id: int = 1) -> TemplateDecision:
         template_version="a" * 64,
         parameters={"nome": "Ana", "questoes": "420"},
     )
+
+
+def test_prepare_blocks_unverified_execution_before_plan_write(
+    test_settings: Settings,
+    tmp_path: Path,
+) -> None:
+    run_id = prepared_run(test_settings, tmp_path)
+    runtime = FakeRuntime()
+    runtime.templates[0]["body"] = "Você resolveu {{2}} questões, {{1}}!"
+    plan = tmp_path / "blocked.json"
+    exported = ReportDataService(test_settings).export_delivery(run_id)
+    manifest_path = Path(str(exported["output_path"]))
+    import os
+
+    os.utime(manifest_path, ns=(1, 1))
+    with pytest.raises(RuntimeDeliveryError, match="execution_evidence_required"):
+        prepare(test_settings, runtime.client, run_id, [decision()], plan)
+    assert not plan.exists()
+    assert manifest_path.stat().st_mtime_ns == 1
+    assert all(request.method == "GET" for request in runtime.calls)
+
+
+def test_submit_revalidates_legacy_plan_before_upload(
+    test_settings: Settings,
+    tmp_path: Path,
+) -> None:
+    run_id = prepared_run(test_settings, tmp_path)
+    runtime = FakeRuntime()
+    plan = tmp_path / "legacy.json"
+    prepare(test_settings, runtime.client, run_id, [decision()], plan)
+    envelope = json.loads(plan.read_text())
+    # Synthetic formerly approved plan; not an operational frozen artifact.
+    runtime.templates[0]["body"] = "Você resolveu {{2}} questões, {{1}}!"
+    envelope["plan"]["items"][0]["preview"] = "Você resolveu 420 questões, Ana!"
+    envelope["plan_hash"] = digest(envelope["plan"])
+    plan.write_text(json.dumps(envelope))
+    before = plan.read_bytes()
+    with pytest.raises(RuntimeDeliveryError, match="execution_evidence_required"):
+        submit_plan(test_settings, runtime.client, plan, envelope["plan_hash"])
+    assert plan.read_bytes() == before
+    assert all(request.method == "GET" for request in runtime.calls)
+
+
+def test_declared_claims_cannot_supply_their_own_evidence(
+    test_settings: Settings,
+    tmp_path: Path,
+) -> None:
+    run_id = prepared_run(test_settings, tmp_path)
+    runtime = FakeRuntime()
+    declared = TemplateDecision.model_validate(
+        decision().model_dump()
+        | {
+            "analysis_claims": [{"kind": "practice"}],
+        }
+    )
+    with pytest.raises(RuntimeDeliveryError, match="execution_evidence_required"):
+        prepare(test_settings, runtime.client, run_id, [declared], tmp_path / "blocked.json")
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError):
+        TemplateDecision.model_validate(declared.model_dump() | {"verified_evidence": []})
+
+
+def test_prepare_and_submit_with_explicit_test_destination_uses_override(
+    test_settings: Settings,
+    tmp_path: Path,
+) -> None:
+    run_id = prepared_run(test_settings, tmp_path)
+    runtime = FakeRuntime()
+    plan = tmp_path / "test-plan.json"
+    destination = "5511888888888"
+
+    result = prepare(
+        test_settings,
+        runtime.client,
+        run_id,
+        [decision()],
+        plan,
+        test_destination=destination,
+    )
+
+    frozen = json.loads(plan.read_text())["plan"]
+    assert frozen["test_destination"] == destination
+    assert frozen["items"][0]["request_key"].startswith("test:")
+
+    submit_plan(test_settings, runtime.client, plan, result["plan_hash"])
+    request = next(iter(runtime.requests.values()))
+    assert request["phone"] == destination
+
+
+def test_test_destination_request_key_changes_with_template_content(
+    test_settings: Settings,
+    tmp_path: Path,
+) -> None:
+    run_id = prepared_run(test_settings, tmp_path)
+    runtime = FakeRuntime()
+    destination = "5511888888888"
+    first = prepare(
+        test_settings,
+        runtime.client,
+        run_id,
+        [decision()],
+        tmp_path / "first.json",
+        test_destination=destination,
+    )
+    changed = decision()
+    changed.parameters["questoes"] = "421"
+    second = prepare(
+        test_settings,
+        runtime.client,
+        run_id,
+        [changed],
+        tmp_path / "second.json",
+        test_destination=destination,
+    )
+    first_plan = json.loads((tmp_path / "first.json").read_text())["plan"]
+    second_plan = json.loads((tmp_path / "second.json").read_text())["plan"]
+    first_key = first_plan["items"][0]["request_key"]
+    second_key = second_plan["items"][0]["request_key"]
+
+    assert first["plan_hash"] != second["plan_hash"]
+    assert first_key != second_key
 
 
 def test_prepare_and_submit_uses_existing_identity_and_requires_exact_approval(

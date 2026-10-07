@@ -39,11 +39,19 @@ def prepare_command(
     run_id: Annotated[int, typer.Option("--run")],
     decisions: Annotated[Path, typer.Option("--decisions")],
     output: Annotated[Path, typer.Option("--output")],
+    test_destination: Annotated[str | None, typer.Option("--test-destination")] = None,
 ) -> None:
     """Validate Hermes' choices and freeze a private reviewable plan; does not send."""
     client = RuntimeClient.from_env()
     try:
-        result = prepare(Settings.load(), client, run_id, read_decisions(decisions), output)
+        result = prepare(
+            Settings.load(),
+            client,
+            run_id,
+            read_decisions(decisions),
+            output,
+            test_destination=test_destination,
+        )
         typer.echo(json.dumps(result))
     except RuntimeDeliveryError as exc:
         raise typer.BadParameter(str(exc)) from None

@@ -93,8 +93,21 @@ tentativas estão em `.env.example` e explicados no `HERMES_HANDOFF.md`.
 Retenção, horário e modo de aprovação são configurações; não criam sozinhos limpeza,
 agendamento ou fila de aprovação/entrega no Hermes.
 
-`run extract` consulta desempenho, questões e atividades e persiste as três fontes. Depois,
-`report generate-batch --run ID` gera os PDFs aprovados dos registros válidos e informa quais
+`run extract` consulta desempenho, questões e atividades e persiste as três fontes. Quando
+solicita questões, o cliente também abre uma sessão nova do painel do aluno identificado na
+ficha, coleta todas as páginas de **Lançamentos de Questões** antes de gerar o relatório e
+inclui essa fonte no bundle. O parser filtra pelas datas do mês e preenche `total`, `correct`
+e `wrong` de cada assunto, com proveniência e período. As contagens chegam ao SQLite e ao
+pacote canônico exportado; o caminho `report generate-live` também consome essa fonte.
+
+Navegação inesperada, paginação incompleta/instável, identidade divergente, linhas inválidas
+ou diferenças entre a soma dos assuntos e o total/acertos mensais impedem usar uma amostra
+parcial. O limite é de 100 páginas por aluno. As chamadas mantêm os controles de espera e
+retry existentes; o POST de geração não ocorre se a aquisição prévia falhar. Dados legados
+sem essa fonte continuam com contagens desconhecidas, sem preenchimento retroativo.
+Quantidade registrada não prova execução nem domínio; os gates de análise permanecem.
+
+Depois, `report generate-batch --run ID` gera os PDFs aprovados dos registros válidos e informa quais
 registros foram ignorados. PDFs já aprovados ou enviados não são sobrescritos por esse comando.
 O resultado fica em `review/AAAA-MM/run-ID/pdf`, com caminho e hash registrados no banco.
 

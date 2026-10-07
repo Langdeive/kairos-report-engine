@@ -448,6 +448,10 @@ def test_unknown_grouping_is_rejected_before_network(test_settings: Settings) ->
 def test_generate_report_bundle_fetches_requested_models_with_one_key(
     test_settings: Settings,
 ) -> None:
+    from tests.unit.test_topic_extraction import APP, LAUNCH_PATH, launch_page, mock_panel
+
+    mock_panel()
+    respx.get(f"{APP}{LAUNCH_PATH}").respond(200, text=launch_page(""))
     respx.post("https://admin.tutory.com.br/intent/cadastrar-relatorio-coach").mock(
         return_value=httpx.Response(
             200,
@@ -467,7 +471,7 @@ def test_generate_report_bundle_fetches_requested_models_with_one_key(
     )
 
     assert bundle.key == "k1"
-    assert set(bundle.documents) == {"desempenho", "questoes", "aluno"}
+    assert set(bundle.documents) == {"desempenho", "questoes", "aluno", "lancamentos-questoes"}
     assert "Relatório questoes" in bundle.documents["questoes"]
 
 

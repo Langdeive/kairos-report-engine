@@ -250,8 +250,10 @@ def report_generate_live(
         period_start=period_start,
         period_end=period_end,
         metrics=metrics,
-        questions=parse_question_report(bundle.documents["questoes"],
-                                         period_start=period_start, period_end=period_end),
+        questions=parse_question_report(
+            bundle.documents["questoes"], period_start=period_start, period_end=period_end,
+            topic_launches_html=bundle.documents.get("lancamentos-questoes"),
+        ),
         student_activity=parse_student_activity_report(bundle.documents["aluno"]),
         require_monthly_source=True,
     )

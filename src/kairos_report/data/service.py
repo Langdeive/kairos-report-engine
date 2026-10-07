@@ -43,7 +43,10 @@ class DataExportResult(BaseModel):
 
 class ReportDataService:
     def __init__(
-        self, settings: Settings, *, eligibility_source: EligibilitySource | None = None,
+        self,
+        settings: Settings,
+        *,
+        eligibility_source: EligibilitySource | None = None,
     ) -> None:
         self._settings = settings
         self._sessions = session_factory_for(settings)
@@ -56,7 +59,8 @@ class ReportDataService:
         with self._sessions() as session:
             report = session.get(StudentReport, data.identity.report_id)
             if (
-                report is None or report.student.name != data.identity.student_name
+                report is None
+                or report.student.name != data.identity.student_name
                 or report.period_start != data.identity.period_start
                 or report.period_end != data.identity.period_end
             ):
@@ -95,7 +99,8 @@ class ReportDataService:
                 / "pdf"
             )
             persisted_exclusions = {
-                report.id: report.validation_errors for report in reports
+                report.id: report.validation_errors
+                for report in reports
                 if report.status == ReportStatus.BLOCKED
                 and is_policy_exclusion(report.validation_errors)
             }
@@ -138,8 +143,14 @@ class ReportDataService:
             "delivery_manifest": self.export_delivery(run_id),
         }
 
-    def export_delivery(self, run_id: int, output_path: Path | None = None) -> dict[str, object]:
-        """Local recipient-to-PDF manifest for Hermes; never sends or approves messages."""
+    def export_delivery(
+        self,
+        run_id: int,
+        output_path: Path | None = None,
+        *,
+        write_manifest: bool = True,
+    ) -> dict[str, object]:
+        """Local manifest; write_manifest=False returns a read-only in-memory snapshot."""
         cipher = PhoneCipher(self._settings.data_key)
         items: list[dict[str, object]] = []
         with self._sessions() as session:
@@ -208,6 +219,8 @@ class ReportDataService:
         ready = sum(item["ready_for_hermes"] is True for item in items)
         excluded = sum(is_policy_exclusion(item["issues"]) for item in items)  # type: ignore[arg-type]
         payload = {"schema_version": "1.0", "run_id": run_id, "items": items}
+        if not write_manifest:
+            return payload
         destination.parent.mkdir(parents=True, exist_ok=True)
         with tempfile.NamedTemporaryFile(
             mode="w",
@@ -247,17 +260,13 @@ class ReportDataService:
             expected = run.expected_count
 
         destination = output_path or (
-            self._settings.data_dir
-            / "review"
-            / period_key
-            / f"run-{run_id}"
-            / "report-data.jsonl"
+            self._settings.data_dir / "review" / period_key / f"run-{run_id}" / "report-data.jsonl"
         )
         self._write_jsonl(destination, envelopes)
         statuses = [envelope.data_status for envelope in envelopes]
         excluded = sum(
-            report.status == ReportStatus.BLOCKED
-            and is_policy_exclusion(report.validation_errors) for report in reports
+            report.status == ReportStatus.BLOCKED and is_policy_exclusion(report.validation_errors)
+            for report in reports
         )
         ready = statuses.count("ready")
         blocked = statuses.count("blocked")
@@ -308,7 +317,8 @@ class ReportDataService:
             except (ValidationError, ValueError) as exc:
                 data_status = "blocked"
                 data_issues.append(
-                    "monthly_source_unverified" if str(exc) == "monthly_source_unverified"
+                    "monthly_source_unverified"
+                    if str(exc) == "monthly_source_unverified"
                     else "stored_metrics_invalid"
                 )
             else:

@@ -14,6 +14,7 @@ from urllib.parse import quote, urlsplit
 import httpx
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
+from kairos_report.analysis_provenance import AnalysisClaim, ProvenanceError, validate_analysis
 from kairos_report.config import Settings
 from kairos_report.data.service import ReportDataService
 from kairos_report.errors import KairosReportError
@@ -122,6 +123,19 @@ class TemplateDecision(BaseModel):
     template_id: int = Field(gt=0)
     template_version: str = Field(pattern=r"^[a-f0-9]{64}$")
     parameters: dict[str, str]
+    analysis_claims: list[AnalysisClaim] = Field(default_factory=list)
+
+
+def validate_decision_analysis(
+    decision: TemplateDecision,
+    report: dict[str, Any],
+    preview: str,
+) -> None:
+    """Public seam for draft/review; never accept evidence from decision authors."""
+    try:
+        validate_analysis(preview, report.get("report_data") or {}, claims=decision.analysis_claims)
+    except ProvenanceError as exc:
+        raise RuntimeDeliveryError(str(exc)) from None
 
 
 def read_decisions(path: Path) -> list[TemplateDecision]:
@@ -136,10 +150,17 @@ def read_decisions(path: Path) -> list[TemplateDecision]:
 
 
 def current_manifest(settings: Settings, run_id: int) -> dict[int, dict[str, Any]]:
-    result = ReportDataService(settings).export_delivery(run_id)
-    path = Path(str(result["output_path"]))
-    manifest = json.loads(path.read_text(encoding="utf-8"))
-    return {item["report_id"]: item for item in manifest["items"]}
+    manifest = ReportDataService(settings).export_delivery(run_id, write_manifest=False)
+    items = manifest["items"]
+    if not isinstance(items, list) or not all(isinstance(item, dict) for item in items):
+        raise RuntimeDeliveryError("invalid_manifest")
+    return {item["report_id"]: item for item in items}
+
+
+def validate_test_destination(value: str) -> str:
+    if not re.fullmatch(r"\d{10,15}", value):
+        raise RuntimeDeliveryError("invalid_test_destination")
+    return value
 
 
 def choose_template(decision: TemplateDecision, catalog: list[dict[str, Any]]) -> dict[str, Any]:
@@ -172,7 +193,13 @@ def prepare(
     run_id: int,
     decisions: list[TemplateDecision],
     output: Path,
+    *,
+    test_destination: str | None = None,
 ) -> dict[str, Any]:
+    if test_destination is not None:
+        test_destination = validate_test_destination(test_destination)
+        if len(decisions) != 1:
+            raise RuntimeDeliveryError("test_destination_requires_single_report")
     manifest, catalog = current_manifest(settings, run_id), client.catalog()
     if not decisions or len({d.report_id for d in decisions}) != len(decisions):
         raise RuntimeDeliveryError("empty_or_duplicate_decisions")
@@ -183,17 +210,37 @@ def prepare(
             raise RuntimeDeliveryError("report_not_ready")
         template = choose_template(decision, catalog)
         identity = [report[k] for k in ("student_id", "period_start", "period_end", "revision")]
+        test_request_identity = {
+            "report": identity,
+            "destination": test_destination,
+            "template_id": decision.template_id,
+            "template_version": decision.template_version,
+            "parameters": decision.parameters,
+            "pdf_sha256": report["pdf_sha256"],
+        }
+        request_key = (
+            f"test:{digest(test_request_identity)}"
+            if test_destination is not None
+            else f"report:{digest(identity)}"
+        )
         slots = {p["slot"]: decision.parameters[p["name"]] for p in template["parameters"]}
         preview = render_preview(template["body"], slots)
+        validate_decision_analysis(decision, report, preview)
         items.append(
             {
                 "decision": decision.model_dump(),
                 "report": report,
-                "request_key": f"report:{digest(identity)}",
+                "request_key": request_key,
                 "preview": preview,
             }
         )
-    plan = {"schema_version": "1.0", "runtime_url": client.url, "run_id": run_id, "items": items}
+    plan = {
+        "schema_version": "1.0",
+        "runtime_url": client.url,
+        "run_id": run_id,
+        "items": items,
+        "test_destination": test_destination,
+    }
     plan_hash = digest(plan)
     write_private(output, {"plan": plan, "plan_hash": plan_hash})
     return {
@@ -216,16 +263,25 @@ def submit_plan(
         if settings.approval_mode == "required" and approved_hash != plan_hash:
             raise RuntimeDeliveryError("approval_required_for_exact_plan_hash")
         items = plan["items"]
+        test_destination = plan.get("test_destination")
+        if test_destination is not None:
+            test_destination = validate_test_destination(test_destination)
+            if len(items) != 1:
+                raise RuntimeDeliveryError("test_destination_requires_single_report")
         manifest = current_manifest(settings, plan["run_id"])
         catalog = client.catalog()
         # Validate the whole selection before the first network mutation.
         for item in items:
             decision = TemplateDecision.model_validate(item["decision"])
-            choose_template(decision, catalog)
+            template = choose_template(decision, catalog)
             actual = manifest.get(decision.report_id)
             frozen = item["report"]
             if not actual or not actual["ready_for_hermes"]:
                 raise RuntimeDeliveryError("report_not_ready")
+            slots = {p["slot"]: decision.parameters[p["name"]] for p in template["parameters"]}
+            preview = render_preview(template["body"], slots)
+            validate_decision_analysis(decision, actual, preview)
+            validate_decision_analysis(decision, actual, item["preview"])
             for field in (
                 "student_id",
                 "phone",
@@ -263,7 +319,7 @@ def submit_plan(
             "request_key": key,
             "batch_id": f"reports:{report['period_start']}:{report['period_end']}",
             "channel_id": decision["channel_id"],
-            "phone": report["phone"],
+            "phone": test_destination or report["phone"],
             "recipient_name": report["student_name"],
             "template_id": decision["template_id"],
             "template_version": decision["template_version"],

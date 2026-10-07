@@ -8,7 +8,7 @@ from dataclasses import dataclass, replace
 from datetime import UTC, date, datetime
 from email.utils import parsedate_to_datetime
 from typing import Any, Literal
-from urllib.parse import parse_qs, urlsplit
+from urllib.parse import parse_qs, urljoin, urlsplit
 
 import httpx
 from selectolax.parser import HTMLParser
@@ -65,6 +65,8 @@ class TutoryClient:
     STUDENT_PANEL_ACCESS = "https://app.tutory.com.br/intent/ver-painel"
     STUDENT_PANEL_PATH = "https://app.tutory.com.br/painel/"
     PAUSE_HISTORY_PATH = "https://app.tutory.com.br/painel/config/pausar-plano"
+    QUESTION_LAUNCH_PATH = "/painel/questoes/lancamento"
+    MAX_QUESTION_LAUNCH_PAGES = 100
     RESULT_LIMIT = 50
     COACHING_PAGE_SIZE = 100
     MAX_COACHING_PAGES = 1000
@@ -162,6 +164,33 @@ class TutoryClient:
                     self._merge_students(students_by_id, self._parse_students(page.text))
                     if students_by_id.keys() == roster_ids:
                         break
+
+            # Letter searches are substring searches and may still hit the limit.
+            # Resolve only missing roster IDs and independently prove active membership.
+            if saturated_courses and roster_ids is not None and not (
+                students_by_id.keys() - roster_ids
+            ):
+                for student_id in sorted(roster_ids - students_by_id.keys()):
+                    detail = self._request(
+                        client, "GET", self.STUDENT_DETAIL_PATH, params={"aid": student_id}
+                    )
+                    names = HTMLParser(detail.text).css('input[name="nome"]')
+                    name = (
+                        (names[0].attributes.get("value") or "").strip()
+                        if len(names) == 1 else ""
+                    )
+                    if not name:
+                        raise TutoryContractChanged("Missing roster identity could not be resolved")
+                    page = self._request(
+                        client, "GET", self.STUDENT_SEARCH_PATH,
+                        params={"status": "ativos", "nome": name},
+                    )
+                    matches = [s for s in self._parse_students(page.text) if s.id == student_id]
+                    if len(matches) != 1 or matches[0].name != name:
+                        raise TutoryContractChanged(
+                            "Missing roster identity was not confirmed active"
+                        )
+                    self._merge_students(students_by_id, matches)
 
             if roster_ids is not None and students_by_id.keys() != roster_ids:
                 raise TutoryContractChanged(
@@ -435,7 +464,11 @@ class TutoryClient:
         if unknown_models:
             raise ValueError(f"Unsupported Tutory report models: {sorted(unknown_models)}")
         with httpx.Client(base_url=self.BASE_URL, timeout=30) as client:
-            token = self._authorized_token(client)
+            launch_html = None
+            if "questoes" in models:
+                self._login(client)
+                launch_html = self._student_question_launches(client, student_id)
+            token = self._authorized_token(client, session_logged_in=launch_html is not None)
             client.headers["Authorization"] = f"Bearer {token}"
             generation_data = {
                 "alunos[]": student_id,
@@ -495,12 +528,167 @@ class TutoryClient:
 
         if any("relat" not in html.lower() for html in documents.values()):
             raise TutoryContractChanged("Tutory report document has an unexpected shape")
+        if launch_html is not None:
+            documents["lancamentos-questoes"] = launch_html
         return ReportBundle(key=key, documents=documents)
 
-    def _authorized_token(self, client: httpx.Client) -> str:
+    def read_question_launches(self, student_id: str) -> str:
+        """Read every observed launch page for one identity; never generate a report."""
+        with httpx.Client(base_url=self.BASE_URL, timeout=30) as client:
+            self._login(client)
+            return self._student_question_launches(client, student_id)
+
+    def _student_question_launches(self, client: httpx.Client, student_id: str) -> str:
+        detail = self._request(
+            client, "GET", self.STUDENT_DETAIL_PATH, params={"aid": student_id}
+        )
+        forms = HTMLParser(detail.text).css(f'form[action="{self.STUDENT_PANEL_ACCESS}"]')
+        if len(forms) != 1:
+            raise TutoryContractChanged("topic_launch_panel_unverified")
+        fields: dict[str, str] = {}
+        for node in forms[0].css("input[name]"):
+            name = node.attributes.get("name") or ""
+            if name in fields:
+                raise TutoryContractChanged("topic_launch_identity_unverified")
+            fields[name] = node.attributes.get("value") or ""
+        if (
+            set(fields) != {"id", "cpf", "adm_id", "token"}
+            or fields["id"] != student_id or not all(fields.values())
+        ):
+            raise TutoryContractChanged("topic_launch_identity_unverified")
+        access = self._request(client, "POST", self.STUDENT_PANEL_ACCESS, data=fields)
+        if access.is_redirect:
+            destination = urlsplit(
+                urljoin(self.STUDENT_PANEL_ACCESS, access.headers.get("location", ""))
+            )
+            if (
+                destination.scheme != "https" or destination.netloc != "app.tutory.com.br"
+                or destination.path not in {"/painel", "/painel/"}
+                or destination.query or destination.fragment
+            ):
+                raise TutoryContractChanged("topic_launch_redirect_unverified")
+        panel = self._request(client, "GET", self.STUDENT_PANEL_PATH)
+        links = {
+            urljoin(self.STUDENT_PANEL_PATH, node.attributes["href"])
+            for node in HTMLParser(panel.text).css("a[href]")
+            if node.text(strip=True) == "Lançamentos de Questões"
+        }
+        # Desktop/mobile menus may repeat a link. Validate every destination before
+        # accepting one distinct target; never select the first of ambiguous links.
+        for link in links:
+            self._launch_link(link, allow_page=False)
+        if len(links) != 1:
+            raise TutoryContractChanged("topic_launch_navigation_unverified")
+        current_url = next(iter(links))
+        all_rows: list[str] = []
+        seen_rows: set[str] = set()
+        last_page: int | None = None
+        for page in range(1, self.MAX_QUESTION_LAUNCH_PAGES + 1):
+            response = self._request(client, "GET", current_url)
+            rows, observed_last, next_url = self._launch_page(response.text, current_url, page)
+            if last_page is not None and observed_last != last_page:
+                raise TutoryContractChanged("topic_launch_pagination_changed")
+            last_page = observed_last
+            if any(row in seen_rows for row in rows):
+                raise TutoryContractChanged("topic_launch_duplicate_page")
+            all_rows.extend(rows)
+            seen_rows.update(rows)
+            if page == last_page:
+                return "<table><tbody>" + "".join(all_rows) + "</tbody></table>"
+            if not next_url:
+                raise TutoryContractChanged("topic_launch_pagination_incomplete")
+            current_url = next_url
+        raise TutoryContractChanged("topic_launch_page_budget_exceeded")
+
+    @classmethod
+    def _launch_link(cls, url: str, *, allow_page: bool = True) -> int | None:
+        parts = urlsplit(url)
+        if (
+            parts.scheme != "https" or parts.netloc != "app.tutory.com.br"
+            or parts.path != cls.QUESTION_LAUNCH_PATH or parts.fragment
+        ):
+            raise TutoryContractChanged("topic_launch_navigation_unverified")
+        if not parts.query:
+            return None
+        params = parse_qs(parts.query, keep_blank_values=True)
+        values = params.get("p", [])
+        if (
+            not allow_page or set(params) != {"p"} or len(values) != 1
+            or re.fullmatch(r"[1-9]\d*", values[0]) is None
+        ):
+            raise TutoryContractChanged("topic_launch_pagination_unverified")
+        return int(values[0])
+
+    @classmethod
+    def _launch_page(cls, html: str, url: str, page: int) -> tuple[list[str], int, str | None]:
+        tree = HTMLParser(html)
+        empty_intro = "Faça o lançamento de questões na sua plataforma de estudos"
+        empty_instructions = (
+            "Faça um novo lançamento de questões em sua plataforma de estudos, basta selecionar "
+            "uma disciplina, um assunto e cadastrar os erros e acertos."
+        )
+        empty_cards = [
+            card for card in tree.css("div.card.custom-card")
+            if [node.text(strip=True) for node in card.css("h2")] == ["Questões"]
+            and [node.text(strip=True) for node in card.css("div h6")] == ["Suas Questões"]
+            and [" ".join(node.text().split()) for node in card.css("p")]
+            == [empty_intro, empty_instructions]
+            and any(
+                " ".join(node.text(separator=" ").split())
+                == f"Suas Questões {empty_instructions}"
+                for node in card.css("div")
+            )
+        ]
+        if empty_cards:
+            # Only the complete, scoped first-page empty state proves no launches.
+            # Return through normal collection so monthly reconciliation still applies.
+            if len(empty_cards) != 1 or page != 1 or tree.css("table, .pagination, form"):
+                raise TutoryContractChanged("topic_launch_table_unverified")
+            return [], 1, None
+        expected = ["Disciplina", "Assunto", "Questões", "Acertos", "%", ""]
+        tables = [
+            table for table in tree.css("table")
+            if [node.text(strip=True) for node in table.css("thead td, thead th")] == expected
+        ]
+        if len(tables) != 1 or tables[0].css_first("tbody") is None:
+            raise TutoryContractChanged("topic_launch_table_unverified")
+        rows: list[str] = []
+        for row in tables[0].css("tbody tr"):
+            row_html = row.html
+            if row_html is None:
+                raise TutoryContractChanged("topic_launch_table_unverified")
+            rows.append(row_html)
+        pagination = tree.css(".pagination")
+        if not pagination:
+            if page != 1:
+                raise TutoryContractChanged("topic_launch_pagination_changed")
+            return rows, 1, None
+        if len(pagination) != 1:
+            raise TutoryContractChanged("topic_launch_pagination_unverified")
+        targets: dict[int, str] = {}
+        last: int | None = None
+        for link in pagination[0].css("a[href]"):
+            if link.attributes["href"] == "#!" and link.text(strip=True) == str(page):
+                continue  # Tutory's inert current-page marker, never requested.
+            target = urljoin(url, link.attributes["href"])
+            number = cls._launch_link(target)
+            if number is not None:
+                targets[number] = target
+            if link.text(strip=True) == "Última":
+                if last is not None:
+                    raise TutoryContractChanged("topic_launch_pagination_unverified")
+                last = number
+        if last is None or not page <= last <= cls.MAX_QUESTION_LAUNCH_PAGES:
+            raise TutoryContractChanged("topic_launch_pagination_unverified")
+        if page < last and not rows:
+            raise TutoryContractChanged("topic_launch_pagination_incomplete")
+        return rows, last, targets.get(page + 1)
+
+    def _authorized_token(self, client: httpx.Client, *, session_logged_in: bool = False) -> str:
         token = self._token
         if token is None:
-            self._login(client)
+            if not session_logged_in:
+                self._login(client)
             dashboard = self._request(client, "GET", self.DASHBOARD_PATH)
             token = self._discover_api_token(client, dashboard.text)
             self._token = token
