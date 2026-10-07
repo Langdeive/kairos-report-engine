@@ -639,9 +639,10 @@ class TutoryClient:
                 for node in card.css("div")
             )
         ]
-        if empty_cards:
-            # Only the complete, scoped first-page empty state proves no launches.
-            # Return through normal collection so monthly reconciliation still applies.
+        if empty_cards and not tree.css("table"):
+            # Instructions can coexist with real launches. A table must go through
+            # the normal table/pagination contract, never become an empty result.
+            # Only a complete first-page state without data evidence proves empty.
             if len(empty_cards) != 1 or page != 1 or tree.css("table, .pagination, form"):
                 raise TutoryContractChanged("topic_launch_table_unverified")
             return [], 1, None

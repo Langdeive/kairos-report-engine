@@ -99,10 +99,11 @@ def test_prepare_blocks_unverified_execution_before_plan_write(
     import os
 
     os.utime(manifest_path, ns=(1, 1))
+    original_mtime = manifest_path.stat().st_mtime_ns
     with pytest.raises(RuntimeDeliveryError, match="execution_evidence_required"):
         prepare(test_settings, runtime.client, run_id, [decision()], plan)
     assert not plan.exists()
-    assert manifest_path.stat().st_mtime_ns == 1
+    assert manifest_path.stat().st_mtime_ns == original_mtime
     assert all(request.method == "GET" for request in runtime.calls)
 
 
@@ -257,11 +258,14 @@ def test_new_catalog_templates_need_no_code_change(
 
 
 @pytest.mark.parametrize("problem", ["pdf_changed", "template_changed", "plan_changed"])
+@pytest.mark.parametrize("approval_mode", ["required", "automatic"])
 def test_changes_block_before_any_upload(
     test_settings: Settings,
     tmp_path: Path,
     problem: str,
+    approval_mode: str,
 ) -> None:
+    test_settings = test_settings.model_copy(update={"approval_mode": approval_mode})
     run_id = prepared_run(test_settings, tmp_path)
     runtime = FakeRuntime()
     plan = tmp_path / "plan.json"
@@ -279,10 +283,13 @@ def test_changes_block_before_any_upload(
     assert all(request.method == "GET" for request in runtime.calls)
 
 
+@pytest.mark.parametrize("approval_mode", ["required", "automatic"])
 def test_uncertain_registration_reuses_same_request_and_pdf(
     test_settings: Settings,
     tmp_path: Path,
+    approval_mode: str,
 ) -> None:
+    test_settings = test_settings.model_copy(update={"approval_mode": approval_mode})
     run_id = prepared_run(test_settings, tmp_path)
     runtime = FakeRuntime()
     plan = tmp_path / "plan.json"
